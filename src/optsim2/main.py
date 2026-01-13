@@ -5,8 +5,75 @@
 import pygame
 import sys
 import numpy as np
-from typing import Tuple, List
+from typing import Tuple, List, Callable
 from .optics_engine import OpticsEngine, Ray
+
+
+class Slider:
+    """スライダーUIコンポーネント"""
+    def __init__(self, x: int, y: int, width: int, min_val: float, max_val: float,
+                 initial_val: float, label: str, callback: Callable[[float], None]):
+        self.rect = pygame.Rect(x, y, width, 20)
+        self.min_val = min_val
+        self.max_val = max_val
+        self.value = initial_val
+        self.label = label
+        self.callback = callback
+        self.dragging = False
+        self.knob_radius = 8
+
+    def draw(self, surface: pygame.Surface, font: pygame.font.Font):
+        # ラベル
+        label_surf = font.render(self.label, True, (50, 50, 50))
+        surface.blit(label_surf, (self.rect.x, self.rect.y - 20))
+
+        # スライダーバー
+        pygame.draw.rect(surface, (180, 180, 180), self.rect, border_radius=3)
+
+        # つまみの位置を計算
+        ratio = (self.value - self.min_val) / (self.max_val - self.min_val)
+        knob_x = int(self.rect.x + ratio * self.rect.width)
+        knob_y = self.rect.y + self.rect.height // 2
+
+        # つまみ
+        pygame.draw.circle(surface, (70, 130, 220), (knob_x, knob_y), self.knob_radius)
+        pygame.draw.circle(surface, (50, 100, 180), (knob_x, knob_y), self.knob_radius, 2)
+
+        # 値の表示
+        if isinstance(self.value, int):
+            value_text = str(self.value)
+        else:
+            value_text = f"{self.value:.1f}"
+        value_surf = font.render(value_text, True, (80, 80, 80))
+        surface.blit(value_surf, (self.rect.x + self.rect.width + 10, self.rect.y))
+
+    def handle_event(self, event: pygame.event.Event) -> bool:
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mouse_pos = event.pos
+            knob_pos = self._get_knob_pos()
+            if ((mouse_pos[0] - knob_pos[0]) ** 2 + (mouse_pos[1] - knob_pos[1]) ** 2) <= self.knob_radius ** 2:
+                self.dragging = True
+                return True
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self.dragging:
+                self.dragging = False
+                return True
+        elif event.type == pygame.MOUSEMOTION and self.dragging:
+            mouse_x = event.pos[0]
+            ratio = max(0, min(1, (mouse_x - self.rect.x) / self.rect.width))
+            new_value = self.min_val + ratio * (self.max_val - self.min_val)
+            if isinstance(self.min_val, int) and isinstance(self.max_val, int):
+                new_value = int(new_value)
+            self.value = new_value
+            self.callback(self.value)
+            return True
+        return False
+
+    def _get_knob_pos(self) -> Tuple[int, int]:
+        ratio = (self.value - self.min_val) / (self.max_val - self.min_val)
+        knob_x = int(self.rect.x + ratio * self.rect.width)
+        knob_y = self.rect.y + self.rect.height // 2
+        return (knob_x, knob_y)
 
 
 class OpticsSimulator:
@@ -22,7 +89,7 @@ class OpticsSimulator:
     COLOR_TEXT = (50, 50, 50)
     COLOR_GRID = (200, 200, 200)
 
-    def __init__(self, width: int = 1600, height: int = 800):
+    def __init__(self, width: int = 1800, height: int = 900):
         """
         Args:
             width: ウィンドウの幅
@@ -37,20 +104,26 @@ class OpticsSimulator:
         # フォント（日本語対応）
         # Windowsの標準日本語フォントを使用
         try:
-            self.font = pygame.font.SysFont('meiryo', 20)
-            self.title_font = pygame.font.SysFont('meiryo', 28)
+            self.font = pygame.font.SysFont('meiryo', 16)
+            self.title_font = pygame.font.SysFont('meiryo', 24)
+            self.small_font = pygame.font.SysFont('meiryo', 14)
         except:
             # メイリオがない場合は他の日本語フォントを試す
             try:
-                self.font = pygame.font.SysFont('msgothic', 20)
-                self.title_font = pygame.font.SysFont('msgothic', 28)
+                self.font = pygame.font.SysFont('msgothic', 16)
+                self.title_font = pygame.font.SysFont('msgothic', 24)
+                self.small_font = pygame.font.SysFont('msgothic', 14)
             except:
                 # それでもない場合はデフォルト
-                self.font = pygame.font.Font(None, 24)
-                self.title_font = pygame.font.Font(None, 32)
+                self.font = pygame.font.Font(None, 20)
+                self.title_font = pygame.font.Font(None, 28)
+                self.small_font = pygame.font.Font(None, 18)
 
-        # 2つのビュー（横図と上面図）
-        self.view_width = width // 2 - 40
+        # UIパネルとビューのレイアウト
+        self.ui_panel_width = 250
+        self.view_margin = 10
+        remaining_width = width - self.ui_panel_width - self.view_margin * 3
+        self.view_width = remaining_width // 2
         self.view_height = height - 100
 
         # 光学エンジン
@@ -81,6 +154,37 @@ class OpticsSimulator:
         self.dragging_top_view = False
         self.drag_start_pos = None
 
+        # スライダーの初期化
+        self.sliders = []
+        slider_x = 20
+        slider_y_start = 120
+        slider_width = 180
+        slider_spacing = 50
+
+        # 光の角度スライダー
+        self.sliders.append(Slider(
+            slider_x, slider_y_start, slider_width,
+            -90, 90, int(np.degrees(self.light_angle)),
+            "光の角度 (°)",
+            lambda v: self._set_light_angle(v)
+        ))
+
+        # 光の広がりスライダー
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing, slider_width,
+            10, 180, int(np.degrees(self.light_spread)),
+            "光の広がり (°)",
+            lambda v: self._set_light_spread(v)
+        ))
+
+        # 水面位置スライダー
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 2, slider_width,
+            50, self.view_height - 50, int(self.engine.water_level),
+            "水面位置 (px)",
+            lambda v: self._set_water_level(v)
+        ))
+
     def setup_default_scene(self):
         """デフォルトのシーンを設定"""
         # 水面の位置を設定
@@ -89,6 +193,21 @@ class OpticsSimulator:
         # 球を追加（水中）
         ball_y = self.view_height * 0.7
         self.engine.add_ball((self.view_width // 2, ball_y), 40)
+
+    def _set_light_angle(self, angle_deg: float):
+        """光の角度を設定（スライダー用コールバック）"""
+        self.light_angle = np.radians(angle_deg)
+        self.update_simulation()
+
+    def _set_light_spread(self, spread_deg: float):
+        """光の広がりを設定（スライダー用コールバック）"""
+        self.light_spread = np.radians(spread_deg)
+        self.update_simulation()
+
+    def _set_water_level(self, level: float):
+        """水面位置を設定（スライダー用コールバック）"""
+        self.engine.water_level = level
+        self.update_simulation()
 
     def calculate_ball_intensity(self):
         """球に当たった光の強度を計算"""
@@ -192,7 +311,7 @@ class OpticsSimulator:
 
     def draw_side_view(self):
         """横図ビューを描画"""
-        offset_x = 20
+        offset_x = self.ui_panel_width + self.view_margin
         offset_y = 60
 
         # ズーム適用したサーフェスを作成
@@ -331,7 +450,7 @@ class OpticsSimulator:
 
     def draw_top_view(self):
         """上面図ビューを描画（真上から見た水槽）"""
-        offset_x = self.width // 2 + 10
+        offset_x = self.ui_panel_width + self.view_width + self.view_margin * 2
         offset_y = 60
 
         # ズーム適用
@@ -439,28 +558,70 @@ class OpticsSimulator:
 
     def draw_ui(self):
         """UI要素を描画"""
-        angle_deg = int(np.degrees(self.light_angle))
-        spread_deg = int(np.degrees(self.light_spread))
-        info_texts = [
-            f"光源位置: ({self.light_position[0]}, {self.light_position[1]})",
-            f"光の角度: {angle_deg}° / 広がり: {spread_deg}°",
-            f"水面: {int(self.engine.water_level)}",
-            f"光線数: {len(self.engine.rays)}",
-            "左クリック: 光源を移動",
-            "左右キー: 光の角度調整",
-            "Q/E: 光の広がり調整",
-            "上下キー: 水面の位置調整",
-            "R: リセット / ESC: 終了"
+        # UIパネルの背景
+        panel_rect = pygame.Rect(0, 0, self.ui_panel_width, self.height)
+        pygame.draw.rect(self.screen, (240, 240, 245), panel_rect)
+        pygame.draw.line(self.screen, (180, 180, 180), (self.ui_panel_width, 0), (self.ui_panel_width, self.height), 2)
+
+        y = 20
+
+        # タイトル
+        title = self.title_font.render("パラメータ", True, self.COLOR_TEXT)
+        self.screen.blit(title, (15, y))
+        y += 45
+
+        # 光源位置（読み取り専用）
+        text = self.small_font.render("光源位置", True, self.COLOR_TEXT)
+        self.screen.blit(text, (15, y))
+        y += 18
+        pos_text = self.small_font.render(f"X: {int(self.light_position[0])}, Y: {int(self.light_position[1])}", True, (100, 100, 100))
+        self.screen.blit(pos_text, (20, y))
+        y += 30
+
+        # スライダーを描画
+        for slider in self.sliders:
+            slider.draw(self.screen, self.small_font)
+
+        y = 300
+
+        # 光線数（読み取り専用）
+        text = self.small_font.render(f"光線数: {len(self.engine.rays)} 本", True, (100, 100, 100))
+        self.screen.blit(text, (15, y))
+        y += 50
+
+        # 操作説明
+        help_title = self.font.render("操作方法", True, self.COLOR_TEXT)
+        self.screen.blit(help_title, (15, y))
+        y += 30
+
+        help_texts = [
+            "左クリック: 光源移動",
+            "ホイール: ズーム",
+            "中クリック: パン",
+            "左右キー: 角度",
+            "Q/E: 広がり",
+            "↑↓: 水面",
+            "R: リセット",
         ]
 
-        y_offset = self.height - 150
-        for i, text in enumerate(info_texts):
-            surface = self.font.render(text, True, self.COLOR_TEXT)
-            self.screen.blit(surface, (20, y_offset + i * 25))
+        for text in help_texts:
+            surface = self.small_font.render(text, True, (100, 100, 100))
+            self.screen.blit(surface, (20, y))
+            y += 22
 
     def handle_events(self):
         """イベント処理"""
         for event in pygame.event.get():
+            # スライダーのイベント処理を優先
+            slider_handled = False
+            for slider in self.sliders:
+                if slider.handle_event(event):
+                    slider_handled = True
+                    break
+
+            if slider_handled:
+                continue
+
             if event.type == pygame.QUIT:
                 self.running = False
 
@@ -476,35 +637,43 @@ class OpticsSimulator:
                     self.update_simulation()
                 elif event.key == pygame.K_UP:
                     # 水面を上げる
-                    self.engine.water_level = max(50, self.engine.water_level - 10)
+                    self.engine.water_level = max(50, self.engine.water_level - 1)
+                    self.sliders[2].value = int(self.engine.water_level)
                     self.update_simulation()
                 elif event.key == pygame.K_DOWN:
                     # 水面を下げる
-                    self.engine.water_level = min(self.view_height - 50, self.engine.water_level + 10)
+                    self.engine.water_level = min(self.view_height - 50, self.engine.water_level + 1)
+                    self.sliders[2].value = int(self.engine.water_level)
                     self.update_simulation()
                 elif event.key == pygame.K_LEFT:
                     # 光の角度を左に
-                    self.light_angle -= np.pi / 18  # 10度ずつ
+                    self.light_angle -= np.pi / 180  # 1度ずつ
+                    self.sliders[0].value = int(np.degrees(self.light_angle))
                     self.update_simulation()
                 elif event.key == pygame.K_RIGHT:
                     # 光の角度を右に
-                    self.light_angle += np.pi / 18  # 10度ずつ
+                    self.light_angle += np.pi / 180  # 1度ずつ
+                    self.sliders[0].value = int(np.degrees(self.light_angle))
                     self.update_simulation()
                 elif event.key == pygame.K_q:
                     # 光の広がりを狭く
-                    self.light_spread = max(np.pi / 18, self.light_spread - np.pi / 18)
+                    self.light_spread = max(np.pi / 18, self.light_spread - np.pi / 180)  # 1度ずつ
+                    self.sliders[1].value = int(np.degrees(self.light_spread))
                     self.update_simulation()
                 elif event.key == pygame.K_e:
                     # 光の広がりを広く
-                    self.light_spread = min(np.pi, self.light_spread + np.pi / 18)
+                    self.light_spread = min(np.pi, self.light_spread + np.pi / 180)  # 1度ずつ
+                    self.sliders[1].value = int(np.degrees(self.light_spread))
                     self.update_simulation()
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左クリック
                     mouse_pos = pygame.mouse.get_pos()
+                    side_view_x = self.ui_panel_width + self.view_margin
+                    side_view_y = 60
                     # 横図ビュー内かチェック
-                    if (20 <= mouse_pos[0] <= 20 + self.view_width and
-                        60 <= mouse_pos[1] <= 60 + self.view_height):
+                    if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
+                        side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
                         # ズーム・オフセットを考慮した光源の表示位置を計算
                         zoom = self.side_view_zoom
                         if zoom > 1.0:
@@ -514,18 +683,18 @@ class OpticsSimulator:
                             crop_y = max(0, min(int(self.view_height * zoom) - self.view_height,
                                                 (int(self.view_height * zoom) - self.view_height) // 2 - int(self.side_view_offset[1] * zoom)))
                             # 画面上の光源位置
-                            display_light_x = int(self.light_position[0] * zoom) - crop_x + 20
-                            display_light_y = int(self.light_position[1] * zoom) - crop_y + 60
+                            display_light_x = int(self.light_position[0] * zoom) - crop_x + side_view_x
+                            display_light_y = int(self.light_position[1] * zoom) - crop_y + side_view_y
                         elif zoom < 1.0:
                             # 縮小時は中央配置
-                            center_x = 20 + (self.view_width - int(self.view_width * zoom)) // 2
-                            center_y = 60 + (self.view_height - int(self.view_height * zoom)) // 2
+                            center_x = side_view_x + (self.view_width - int(self.view_width * zoom)) // 2
+                            center_y = side_view_y + (self.view_height - int(self.view_height * zoom)) // 2
                             display_light_x = int(self.light_position[0] * zoom) + center_x
                             display_light_y = int(self.light_position[1] * zoom) + center_y
                         else:
                             # 等倍時
-                            display_light_x = int(self.light_position[0]) + 20
-                            display_light_y = int(self.light_position[1]) + 60
+                            display_light_x = int(self.light_position[0]) + side_view_x
+                            display_light_y = int(self.light_position[1]) + side_view_y
 
                         # 光源をドラッグ開始（当たり判定）
                         if np.linalg.norm(np.array(mouse_pos) - np.array([display_light_x, display_light_y])) < int(10 * zoom):
@@ -533,33 +702,45 @@ class OpticsSimulator:
                 elif event.button == 2:  # マウスホイールクリック（中クリック）
                     mouse_pos = pygame.mouse.get_pos()
                     self.drag_start_pos = mouse_pos
+                    side_view_x = self.ui_panel_width + self.view_margin
+                    side_view_y = 60
+                    top_view_x = self.ui_panel_width + self.view_width + self.view_margin * 2
+                    top_view_y = 60
                     # 横図ビュー内かチェック
-                    if (20 <= mouse_pos[0] <= 20 + self.view_width and
-                        60 <= mouse_pos[1] <= 60 + self.view_height):
+                    if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
+                        side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
                         self.dragging_side_view = True
                     # 上面図ビュー内
-                    elif (self.width // 2 + 10 <= mouse_pos[0] <= self.width // 2 + 10 + self.view_width and
-                          60 <= mouse_pos[1] <= 60 + self.view_height):
+                    elif (top_view_x <= mouse_pos[0] <= top_view_x + self.view_width and
+                          top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
                         self.dragging_top_view = True
                 elif event.button == 4:  # マウスホイール上
                     mouse_pos = pygame.mouse.get_pos()
+                    side_view_x = self.ui_panel_width + self.view_margin
+                    side_view_y = 60
+                    top_view_x = self.ui_panel_width + self.view_width + self.view_margin * 2
+                    top_view_y = 60
                     # 横図ビュー内
-                    if (20 <= mouse_pos[0] <= 20 + self.view_width and
-                        60 <= mouse_pos[1] <= 60 + self.view_height):
+                    if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
+                        side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
                         self.side_view_zoom = min(3.0, self.side_view_zoom * 1.1)
                     # 上面図ビュー内
-                    elif (self.width // 2 + 10 <= mouse_pos[0] <= self.width // 2 + 10 + self.view_width and
-                          60 <= mouse_pos[1] <= 60 + self.view_height):
+                    elif (top_view_x <= mouse_pos[0] <= top_view_x + self.view_width and
+                          top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
                         self.top_view_zoom = min(3.0, self.top_view_zoom * 1.1)
                 elif event.button == 5:  # マウスホイール下
                     mouse_pos = pygame.mouse.get_pos()
+                    side_view_x = self.ui_panel_width + self.view_margin
+                    side_view_y = 60
+                    top_view_x = self.ui_panel_width + self.view_width + self.view_margin * 2
+                    top_view_y = 60
                     # 横図ビュー内
-                    if (20 <= mouse_pos[0] <= 20 + self.view_width and
-                        60 <= mouse_pos[1] <= 60 + self.view_height):
+                    if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
+                        side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
                         self.side_view_zoom = max(0.5, self.side_view_zoom / 1.1)
                     # 上面図ビュー内
-                    elif (self.width // 2 + 10 <= mouse_pos[0] <= self.width // 2 + 10 + self.view_width and
-                          60 <= mouse_pos[1] <= 60 + self.view_height):
+                    elif (top_view_x <= mouse_pos[0] <= top_view_x + self.view_width and
+                          top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
                         self.top_view_zoom = max(0.5, self.top_view_zoom / 1.1)
 
             elif event.type == pygame.MOUSEBUTTONUP:
@@ -573,6 +754,8 @@ class OpticsSimulator:
             elif event.type == pygame.MOUSEMOTION:
                 if self.dragging_light:
                     mouse_pos = pygame.mouse.get_pos()
+                    side_view_x = self.ui_panel_width + self.view_margin
+                    side_view_y = 60
 
                     # ズーム・オフセットを考慮してワールド座標に変換
                     zoom = self.side_view_zoom
@@ -583,18 +766,18 @@ class OpticsSimulator:
                         crop_y = max(0, min(int(self.view_height * zoom) - self.view_height,
                                             (int(self.view_height * zoom) - self.view_height) // 2 - int(self.side_view_offset[1] * zoom)))
                         # マウス位置をワールド座標に変換
-                        world_x = (mouse_pos[0] - 20 + crop_x) / zoom
-                        world_y = (mouse_pos[1] - 60 + crop_y) / zoom
+                        world_x = (mouse_pos[0] - side_view_x + crop_x) / zoom
+                        world_y = (mouse_pos[1] - side_view_y + crop_y) / zoom
                     elif zoom < 1.0:
                         # 縮小時
                         center_x = (self.view_width - int(self.view_width * zoom)) // 2
                         center_y = (self.view_height - int(self.view_height * zoom)) // 2
-                        world_x = (mouse_pos[0] - 20 - center_x) / zoom
-                        world_y = (mouse_pos[1] - 60 - center_y) / zoom
+                        world_x = (mouse_pos[0] - side_view_x - center_x) / zoom
+                        world_y = (mouse_pos[1] - side_view_y - center_y) / zoom
                     else:
                         # 等倍時
-                        world_x = mouse_pos[0] - 20
-                        world_y = mouse_pos[1] - 60
+                        world_x = mouse_pos[0] - side_view_x
+                        world_y = mouse_pos[1] - side_view_y
 
                     # ワールド座標の範囲制限
                     world_x = max(0, min(self.view_width, world_x))
