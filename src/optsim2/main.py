@@ -505,10 +505,32 @@ class OpticsSimulator:
                     # 横図ビュー内かチェック
                     if (20 <= mouse_pos[0] <= 20 + self.view_width and
                         60 <= mouse_pos[1] <= 60 + self.view_height):
-                        # 光源をドラッグ開始
-                        if np.linalg.norm(np.array(mouse_pos) - np.array([self.light_position[0] + 20, self.light_position[1] + 60])) < 10:
+                        # ズーム・オフセットを考慮した光源の表示位置を計算
+                        zoom = self.side_view_zoom
+                        if zoom > 1.0:
+                            # ズーム時の切り取り位置を計算
+                            crop_x = max(0, min(int(self.view_width * zoom) - self.view_width,
+                                                (int(self.view_width * zoom) - self.view_width) // 2 - int(self.side_view_offset[0] * zoom)))
+                            crop_y = max(0, min(int(self.view_height * zoom) - self.view_height,
+                                                (int(self.view_height * zoom) - self.view_height) // 2 - int(self.side_view_offset[1] * zoom)))
+                            # 画面上の光源位置
+                            display_light_x = int(self.light_position[0] * zoom) - crop_x + 20
+                            display_light_y = int(self.light_position[1] * zoom) - crop_y + 60
+                        elif zoom < 1.0:
+                            # 縮小時は中央配置
+                            center_x = 20 + (self.view_width - int(self.view_width * zoom)) // 2
+                            center_y = 60 + (self.view_height - int(self.view_height * zoom)) // 2
+                            display_light_x = int(self.light_position[0] * zoom) + center_x
+                            display_light_y = int(self.light_position[1] * zoom) + center_y
+                        else:
+                            # 等倍時
+                            display_light_x = int(self.light_position[0]) + 20
+                            display_light_y = int(self.light_position[1]) + 60
+
+                        # 光源をドラッグ開始（当たり判定）
+                        if np.linalg.norm(np.array(mouse_pos) - np.array([display_light_x, display_light_y])) < int(10 * zoom):
                             self.dragging_light = True
-                elif event.button == 3:  # 右クリック
+                elif event.button == 2:  # マウスホイールクリック（中クリック）
                     mouse_pos = pygame.mouse.get_pos()
                     self.drag_start_pos = mouse_pos
                     # 横図ビュー内かチェック
@@ -543,7 +565,7 @@ class OpticsSimulator:
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 1:
                     self.dragging_light = False
-                elif event.button == 3:
+                elif event.button == 2:  # マウスホイールクリック（中クリック）
                     self.dragging_side_view = False
                     self.dragging_top_view = False
                     self.drag_start_pos = None
@@ -551,10 +573,34 @@ class OpticsSimulator:
             elif event.type == pygame.MOUSEMOTION:
                 if self.dragging_light:
                     mouse_pos = pygame.mouse.get_pos()
-                    # ビュー座標に変換
-                    view_x = max(0, min(self.view_width, mouse_pos[0] - 20))
-                    view_y = max(0, min(self.view_height, mouse_pos[1] - 60))
-                    self.light_position = (view_x, view_y)
+
+                    # ズーム・オフセットを考慮してワールド座標に変換
+                    zoom = self.side_view_zoom
+                    if zoom > 1.0:
+                        # ズーム時の切り取り位置を計算
+                        crop_x = max(0, min(int(self.view_width * zoom) - self.view_width,
+                                            (int(self.view_width * zoom) - self.view_width) // 2 - int(self.side_view_offset[0] * zoom)))
+                        crop_y = max(0, min(int(self.view_height * zoom) - self.view_height,
+                                            (int(self.view_height * zoom) - self.view_height) // 2 - int(self.side_view_offset[1] * zoom)))
+                        # マウス位置をワールド座標に変換
+                        world_x = (mouse_pos[0] - 20 + crop_x) / zoom
+                        world_y = (mouse_pos[1] - 60 + crop_y) / zoom
+                    elif zoom < 1.0:
+                        # 縮小時
+                        center_x = (self.view_width - int(self.view_width * zoom)) // 2
+                        center_y = (self.view_height - int(self.view_height * zoom)) // 2
+                        world_x = (mouse_pos[0] - 20 - center_x) / zoom
+                        world_y = (mouse_pos[1] - 60 - center_y) / zoom
+                    else:
+                        # 等倍時
+                        world_x = mouse_pos[0] - 20
+                        world_y = mouse_pos[1] - 60
+
+                    # ワールド座標の範囲制限
+                    world_x = max(0, min(self.view_width, world_x))
+                    world_y = max(0, min(self.view_height, world_y))
+
+                    self.light_position = (world_x, world_y)
                     self.update_simulation()
                 elif self.dragging_side_view and self.drag_start_pos:
                     mouse_pos = pygame.mouse.get_pos()
