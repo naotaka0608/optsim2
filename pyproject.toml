@@ -1,0 +1,20 @@
+[project]
+name = "optsim2"
+version = "0.1.0"
+description = "光学シミュレーションソフトウェア"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.4.1",
+    "opencv-python>=4.11.0.86",
+    "pillow>=12.1.0",
+    "pygame>=2.6.1",
+    "scipy>=1.17.0",
+]
+
+[project.scripts]
+optsim2 = "optsim2.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

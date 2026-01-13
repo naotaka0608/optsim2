@@ -1,0 +1,41 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+env/
+
+# Claude Code temporary files
+tmpclaude-*
+.claude/
+
+# Development images
+devimg/
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# uv lock file (optional - uncomment if you don't want to track it)
+# uv.lock
