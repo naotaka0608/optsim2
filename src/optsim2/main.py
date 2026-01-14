@@ -1,12 +1,17 @@
 """
 メインアプリケーション
 2画面GUI（横図・上面図）を表示し、光学シミュレーションを実行
+3D表示モードも利用可能
 """
 import pygame
+from pygame.locals import *
+from OpenGL.GL import *
+from OpenGL.GLU import *
 import sys
 import numpy as np
 from typing import Tuple, List, Callable
 from .optics_engine import OpticsEngine, Ray
+import math
 
 
 class Slider:
@@ -96,6 +101,10 @@ class OpticsSimulator:
             height: ウィンドウの高さ
         """
         pygame.init()
+        # キーボードのリピート設定（長押しで連続入力）
+        # delay: 最初のリピートまでの待機時間(ms)
+        # interval: リピート間隔(ms)
+        pygame.key.set_repeat(200, 50)
         self.width = width
         self.height = height
         self.screen = pygame.display.set_mode((width, height))
@@ -185,6 +194,16 @@ class OpticsSimulator:
             lambda v: self._set_water_level(v)
         ))
 
+        # 3Dビューモード設定
+        self.view_mode_3d = False  # False=2Dモード, True=3Dモード
+        self.camera_rotation = [20.0, 45.0]  # [pitch, yaw] in degrees
+        self.camera_distance = 800.0
+        self.camera_target = [0.0, 0.0, 0.0]  # カメラの注視点（平行移動用）
+        self.dragging_camera = False
+        self.dragging_camera_pan = False
+        self.camera_drag_start = None
+        self.camera_pan_start = None
+
     def setup_default_scene(self):
         """デフォルトのシーンを設定"""
         # 水面の位置を設定
@@ -193,6 +212,163 @@ class OpticsSimulator:
         # 球を追加（水中）
         ball_y = self.view_height * 0.7
         self.engine.add_ball((self.view_width // 2, ball_y), 40)
+
+    def init_opengl(self):
+        """OpenGLの初期化"""
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+        glEnable(GL_COLOR_MATERIAL)
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
+
+        # ライトの設定
+        glLightfv(GL_LIGHT0, GL_POSITION, [1, 1, 1, 0])
+        glLightfv(GL_LIGHT0, GL_AMBIENT, [0.3, 0.3, 0.3, 1])
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.8, 0.8, 0.8, 1])
+
+        glClearColor(0.1, 0.1, 0.15, 1.0)
+
+    def setup_3d_perspective(self):
+        """3D透視投影の設定"""
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        gluPerspective(45, self.width / self.height, 0.1, 2000.0)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+
+        # カメラ位置の計算（注視点からの相対位置）
+        pitch_rad = math.radians(self.camera_rotation[0])
+        yaw_rad = math.radians(self.camera_rotation[1])
+
+        cam_x = self.camera_target[0] + self.camera_distance * math.cos(pitch_rad) * math.sin(yaw_rad)
+        cam_y = self.camera_target[1] + self.camera_distance * math.sin(pitch_rad)
+        cam_z = self.camera_target[2] + self.camera_distance * math.cos(pitch_rad) * math.cos(yaw_rad)
+
+        gluLookAt(cam_x, cam_y, cam_z,                      # カメラ位置
+                  self.camera_target[0],
+                  self.camera_target[1],
+                  self.camera_target[2],                     # 注視点
+                  0, 1, 0)                                   # 上方向
+
+    def draw_sphere_3d(self, x, y, z, radius, color):
+        """3D球体を描画"""
+        glPushMatrix()
+        glTranslatef(x, y, z)
+        glColor3f(*color)
+
+        # GLUクアドリックで球体を描画
+        quad = gluNewQuadric()
+        gluSphere(quad, radius, 32, 32)
+        gluDeleteQuadric(quad)
+
+        glPopMatrix()
+
+    def draw_line_3d(self, p1, p2, color, width=2.0):
+        """3D線分を描画"""
+        glDisable(GL_LIGHTING)
+        glLineWidth(width)
+        glColor3f(*color)
+        glBegin(GL_LINES)
+        glVertex3f(*p1)
+        glVertex3f(*p2)
+        glEnd()
+        glEnable(GL_LIGHTING)
+
+    def draw_water_plane_3d(self):
+        """3D水面を描画"""
+        # 水面のY座標を計算（2D座標系を3D座標系に変換）
+        water_y = -(self.engine.water_level - self.view_height / 2)
+
+        glDisable(GL_LIGHTING)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        # 水面の平面
+        glColor4f(0.2, 0.5, 0.8, 0.3)
+        size = 500
+        glBegin(GL_QUADS)
+        glVertex3f(-size, water_y, -size)
+        glVertex3f(size, water_y, -size)
+        glVertex3f(size, water_y, size)
+        glVertex3f(-size, water_y, size)
+        glEnd()
+
+        # グリッド線
+        glColor4f(0.3, 0.6, 0.9, 0.5)
+        glLineWidth(1.0)
+        step = 50
+        glBegin(GL_LINES)
+        for i in range(-10, 11):
+            # X方向の線
+            glVertex3f(i * step, water_y, -size)
+            glVertex3f(i * step, water_y, size)
+            # Z方向の線
+            glVertex3f(-size, water_y, i * step)
+            glVertex3f(size, water_y, i * step)
+        glEnd()
+
+        glDisable(GL_BLEND)
+        glEnable(GL_LIGHTING)
+
+    def draw_3d_view(self):
+        """3Dビュー全体を描画"""
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        self.setup_3d_perspective()
+
+        # 水面を描画
+        self.draw_water_plane_3d()
+
+        # 球を描画（2D座標を3D座標に変換）
+        for ball in self.engine.balls:
+            x_2d, y_2d = ball['position']
+            # 2D座標系を3D座標系に変換
+            x_3d = x_2d - self.view_width / 2
+            y_3d = -(y_2d - self.view_height / 2)
+            z_3d = 0  # 横から見た図なのでZ=0
+
+            # 球の色（水中なので少し青みがかった色）
+            self.draw_sphere_3d(x_3d, y_3d, z_3d, ball['radius'], (0.7, 0.8, 0.9))
+
+        # 光源を描画
+        light_x_2d, light_y_2d = self.light_position
+        light_x_3d = light_x_2d - self.view_width / 2
+        light_y_3d = -(light_y_2d - self.view_height / 2)
+        light_z_3d = 0
+
+        # 光源（小さな黄色い球）
+        self.draw_sphere_3d(light_x_3d, light_y_3d, light_z_3d, 10, (1.0, 1.0, 0.3))
+
+        # 光線を描画
+        for ray in self.engine.rays:
+            if len(ray.path) < 2:
+                continue
+
+            # 光線の強度に応じて色を変える
+            intensity_factor = ray.intensity
+            color = (1.0 * intensity_factor, 0.8 * intensity_factor, 0.2 * intensity_factor)
+
+            for i in range(len(ray.path) - 1):
+                p1_2d = ray.path[i]
+                p2_2d = ray.path[i + 1]
+
+                # 2D座標を3D座標に変換
+                p1_3d = (p1_2d[0] - self.view_width / 2,
+                        -(p1_2d[1] - self.view_height / 2),
+                        0)
+                p2_3d = (p2_2d[0] - self.view_width / 2,
+                        -(p2_2d[1] - self.view_height / 2),
+                        0)
+
+                self.draw_line_3d(p1_3d, p2_3d, color, 1.5)
+
+        # 座標軸を描画（デバッグ用）
+        axis_length = 100
+        # X軸（赤）
+        self.draw_line_3d((0, 0, 0), (axis_length, 0, 0), (1, 0, 0), 2)
+        # Y軸（緑）
+        self.draw_line_3d((0, 0, 0), (0, axis_length, 0), (0, 1, 0), 2)
+        # Z軸（青）
+        self.draw_line_3d((0, 0, 0), (0, 0, axis_length), (0, 0, 1), 2)
 
     def _set_light_angle(self, angle_deg: float):
         """光の角度を設定（スライダー用コールバック）"""
@@ -595,12 +771,14 @@ class OpticsSimulator:
         y += 30
 
         help_texts = [
-            "左クリック: 光源移動",
+            "左クリック: 光源移動(2D)",
             "ホイール: ズーム",
-            "中クリック: パン",
+            "中クリック: 平行移動",
+            "右クリック: 回転(3D)",
             "左右キー: 角度",
             "Q/E: 広がり",
             "↑↓: 水面",
+            "2/3キー: 2D/3D切替",
             "R: リセット",
         ]
 
@@ -665,83 +843,120 @@ class OpticsSimulator:
                     self.light_spread = min(np.pi, self.light_spread + np.pi / 180)  # 1度ずつ
                     self.sliders[1].value = int(np.degrees(self.light_spread))
                     self.update_simulation()
+                elif event.key == pygame.K_2:
+                    # 2Dモードに切り替え
+                    if self.view_mode_3d:
+                        self.view_mode_3d = False
+                        # Pygameの2D描画モードに戻す
+                        pygame.display.set_mode((self.width, self.height))
+                elif event.key == pygame.K_3:
+                    # 3Dモードに切り替え
+                    if not self.view_mode_3d:
+                        self.view_mode_3d = True
+                        # OpenGL有効のウィンドウに切り替え
+                        pygame.display.set_mode((self.width, self.height), DOUBLEBUF | OPENGL)
+                        self.init_opengl()
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左クリック
-                    mouse_pos = pygame.mouse.get_pos()
-                    side_view_x = self.ui_panel_width + self.view_margin
-                    side_view_y = 60
-                    # 横図ビュー内かチェック
-                    if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
-                        side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
-                        # ズーム・オフセットを考慮した光源の表示位置を計算
-                        zoom = self.side_view_zoom
-                        if zoom > 1.0:
-                            # ズーム時の切り取り位置を計算
-                            crop_x = max(0, min(int(self.view_width * zoom) - self.view_width,
-                                                (int(self.view_width * zoom) - self.view_width) // 2 - int(self.side_view_offset[0] * zoom)))
-                            crop_y = max(0, min(int(self.view_height * zoom) - self.view_height,
-                                                (int(self.view_height * zoom) - self.view_height) // 2 - int(self.side_view_offset[1] * zoom)))
-                            # 画面上の光源位置
-                            display_light_x = int(self.light_position[0] * zoom) - crop_x + side_view_x
-                            display_light_y = int(self.light_position[1] * zoom) - crop_y + side_view_y
-                        elif zoom < 1.0:
-                            # 縮小時は中央配置
-                            center_x = side_view_x + (self.view_width - int(self.view_width * zoom)) // 2
-                            center_y = side_view_y + (self.view_height - int(self.view_height * zoom)) // 2
-                            display_light_x = int(self.light_position[0] * zoom) + center_x
-                            display_light_y = int(self.light_position[1] * zoom) + center_y
-                        else:
-                            # 等倍時
-                            display_light_x = int(self.light_position[0]) + side_view_x
-                            display_light_y = int(self.light_position[1]) + side_view_y
+                    # 2Dモード時のみ光源ドラッグ
+                    if not self.view_mode_3d:
+                        mouse_pos = pygame.mouse.get_pos()
+                        side_view_x = self.ui_panel_width + self.view_margin
+                        side_view_y = 60
+                        # 横図ビュー内かチェック
+                        if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
+                            side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
+                            # ズーム・オフセットを考慮した光源の表示位置を計算
+                            zoom = self.side_view_zoom
+                            if zoom > 1.0:
+                                # ズーム時の切り取り位置を計算
+                                crop_x = max(0, min(int(self.view_width * zoom) - self.view_width,
+                                                    (int(self.view_width * zoom) - self.view_width) // 2 - int(self.side_view_offset[0] * zoom)))
+                                crop_y = max(0, min(int(self.view_height * zoom) - self.view_height,
+                                                    (int(self.view_height * zoom) - self.view_height) // 2 - int(self.side_view_offset[1] * zoom)))
+                                # 画面上の光源位置
+                                display_light_x = int(self.light_position[0] * zoom) - crop_x + side_view_x
+                                display_light_y = int(self.light_position[1] * zoom) - crop_y + side_view_y
+                            elif zoom < 1.0:
+                                # 縮小時は中央配置
+                                center_x = side_view_x + (self.view_width - int(self.view_width * zoom)) // 2
+                                center_y = side_view_y + (self.view_height - int(self.view_height * zoom)) // 2
+                                display_light_x = int(self.light_position[0] * zoom) + center_x
+                                display_light_y = int(self.light_position[1] * zoom) + center_y
+                            else:
+                                # 等倍時
+                                display_light_x = int(self.light_position[0]) + side_view_x
+                                display_light_y = int(self.light_position[1]) + side_view_y
 
-                        # 光源をドラッグ開始（当たり判定）
-                        if np.linalg.norm(np.array(mouse_pos) - np.array([display_light_x, display_light_y])) < int(10 * zoom):
-                            self.dragging_light = True
+                            # 光源をドラッグ開始（当たり判定）
+                            if np.linalg.norm(np.array(mouse_pos) - np.array([display_light_x, display_light_y])) < int(10 * zoom):
+                                self.dragging_light = True
                 elif event.button == 2:  # マウスホイールクリック（中クリック）
                     mouse_pos = pygame.mouse.get_pos()
                     self.drag_start_pos = mouse_pos
-                    side_view_x = self.ui_panel_width + self.view_margin
-                    side_view_y = 60
-                    top_view_x = self.ui_panel_width + self.view_width + self.view_margin * 2
-                    top_view_y = 60
-                    # 横図ビュー内かチェック
-                    if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
-                        side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
-                        self.dragging_side_view = True
-                    # 上面図ビュー内
-                    elif (top_view_x <= mouse_pos[0] <= top_view_x + self.view_width and
-                          top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
-                        self.dragging_top_view = True
-                elif event.button == 4:  # マウスホイール上
-                    mouse_pos = pygame.mouse.get_pos()
-                    side_view_x = self.ui_panel_width + self.view_margin
-                    side_view_y = 60
-                    top_view_x = self.ui_panel_width + self.view_width + self.view_margin * 2
-                    top_view_y = 60
-                    # 横図ビュー内
-                    if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
-                        side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
-                        self.side_view_zoom = min(3.0, self.side_view_zoom * 1.1)
-                    # 上面図ビュー内
-                    elif (top_view_x <= mouse_pos[0] <= top_view_x + self.view_width and
-                          top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
-                        self.top_view_zoom = min(3.0, self.top_view_zoom * 1.1)
-                elif event.button == 5:  # マウスホイール下
-                    mouse_pos = pygame.mouse.get_pos()
-                    side_view_x = self.ui_panel_width + self.view_margin
-                    side_view_y = 60
-                    top_view_x = self.ui_panel_width + self.view_width + self.view_margin * 2
-                    top_view_y = 60
-                    # 横図ビュー内
-                    if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
-                        side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
-                        self.side_view_zoom = max(0.5, self.side_view_zoom / 1.1)
-                    # 上面図ビュー内
-                    elif (top_view_x <= mouse_pos[0] <= top_view_x + self.view_width and
-                          top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
-                        self.top_view_zoom = max(0.5, self.top_view_zoom / 1.1)
+                    if self.view_mode_3d:
+                        # 3Dモード時はカメラ平行移動
+                        self.dragging_camera_pan = True
+                        self.camera_pan_start = mouse_pos
+                    else:
+                        # 2Dモード時は平行移動
+                        side_view_x = self.ui_panel_width + self.view_margin
+                        side_view_y = 60
+                        top_view_x = self.ui_panel_width + self.view_width + self.view_margin * 2
+                        top_view_y = 60
+                        # 横図ビュー内かチェック
+                        if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
+                            side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
+                            self.dragging_side_view = True
+                        # 上面図ビュー内
+                        elif (top_view_x <= mouse_pos[0] <= top_view_x + self.view_width and
+                              top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
+                            self.dragging_top_view = True
+                elif event.button == 3:  # 右クリック
+                    if self.view_mode_3d:
+                        # 3Dモード時はカメラ回転
+                        mouse_pos = pygame.mouse.get_pos()
+                        self.dragging_camera = True
+                        self.camera_drag_start = mouse_pos
+                elif event.button == 4:  # マウスホイール上（ズームイン）
+                    if self.view_mode_3d:
+                        # 3Dモード時はカメラ距離を縮める（ズームイン）
+                        self.camera_distance = max(200.0, self.camera_distance - 30.0)
+                    else:
+                        # 2Dモード時
+                        mouse_pos = pygame.mouse.get_pos()
+                        side_view_x = self.ui_panel_width + self.view_margin
+                        side_view_y = 60
+                        top_view_x = self.ui_panel_width + self.view_width + self.view_margin * 2
+                        top_view_y = 60
+                        # 横図ビュー内
+                        if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
+                            side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
+                            self.side_view_zoom = min(3.0, self.side_view_zoom * 1.1)
+                        # 上面図ビュー内
+                        elif (top_view_x <= mouse_pos[0] <= top_view_x + self.view_width and
+                              top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
+                            self.top_view_zoom = min(3.0, self.top_view_zoom * 1.1)
+                elif event.button == 5:  # マウスホイール下（ズームアウト）
+                    if self.view_mode_3d:
+                        # 3Dモード時はカメラ距離を伸ばす（ズームアウト）
+                        self.camera_distance = min(2000.0, self.camera_distance + 30.0)
+                    else:
+                        # 2Dモード時
+                        mouse_pos = pygame.mouse.get_pos()
+                        side_view_x = self.ui_panel_width + self.view_margin
+                        side_view_y = 60
+                        top_view_x = self.ui_panel_width + self.view_width + self.view_margin * 2
+                        top_view_y = 60
+                        # 横図ビュー内
+                        if (side_view_x <= mouse_pos[0] <= side_view_x + self.view_width and
+                            side_view_y <= mouse_pos[1] <= side_view_y + self.view_height):
+                            self.side_view_zoom = max(0.5, self.side_view_zoom / 1.1)
+                        # 上面図ビュー内
+                        elif (top_view_x <= mouse_pos[0] <= top_view_x + self.view_width and
+                              top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
+                            self.top_view_zoom = max(0.5, self.top_view_zoom / 1.1)
 
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 1:
@@ -749,10 +964,54 @@ class OpticsSimulator:
                 elif event.button == 2:  # マウスホイールクリック（中クリック）
                     self.dragging_side_view = False
                     self.dragging_top_view = False
+                    self.dragging_camera_pan = False
                     self.drag_start_pos = None
+                    self.camera_pan_start = None
+                elif event.button == 3:  # 右クリック
+                    self.dragging_camera = False
+                    self.camera_drag_start = None
 
             elif event.type == pygame.MOUSEMOTION:
-                if self.dragging_light:
+                if self.dragging_camera and self.camera_drag_start:
+                    # 3Dモード時のカメラ回転
+                    mouse_pos = pygame.mouse.get_pos()
+                    dx = mouse_pos[0] - self.camera_drag_start[0]
+                    dy = mouse_pos[1] - self.camera_drag_start[1]
+
+                    # カメラの回転を更新
+                    self.camera_rotation[1] += dx * 0.5  # yaw
+                    self.camera_rotation[0] -= dy * 0.5  # pitch
+
+                    # pitch を -89 ~ 89 度に制限
+                    self.camera_rotation[0] = max(-89, min(89, self.camera_rotation[0]))
+
+                    self.camera_drag_start = mouse_pos
+                elif self.dragging_camera_pan and self.camera_pan_start:
+                    # 3Dモード時のカメラ平行移動
+                    mouse_pos = pygame.mouse.get_pos()
+                    dx = mouse_pos[0] - self.camera_pan_start[0]
+                    dy = mouse_pos[1] - self.camera_pan_start[1]
+
+                    # カメラの向きに基づいて平行移動方向を計算
+                    yaw_rad = math.radians(self.camera_rotation[1])
+
+                    # 右方向ベクトル（X軸周り）
+                    right_x = math.cos(yaw_rad)
+                    right_z = -math.sin(yaw_rad)
+
+                    # 上方向は常にY軸
+                    up_x = 0
+                    up_y = 1
+                    up_z = 0
+
+                    # 移動量を計算（感度調整）
+                    move_speed = 0.5
+                    self.camera_target[0] -= (right_x * dx + up_x * dy) * move_speed
+                    self.camera_target[1] += dy * move_speed
+                    self.camera_target[2] -= (right_z * dx + up_z * dy) * move_speed
+
+                    self.camera_pan_start = mouse_pos
+                elif self.dragging_light:
                     mouse_pos = pygame.mouse.get_pos()
                     side_view_x = self.ui_panel_width + self.view_margin
                     side_view_y = 60
@@ -823,12 +1082,18 @@ class OpticsSimulator:
             self.handle_events()
 
             # 描画
-            self.screen.fill(self.COLOR_BG)
-            self.draw_side_view()
-            self.draw_top_view()
-            self.draw_ui()
+            if self.view_mode_3d:
+                # 3Dモード
+                self.draw_3d_view()
+                pygame.display.flip()
+            else:
+                # 2Dモード
+                self.screen.fill(self.COLOR_BG)
+                self.draw_side_view()
+                self.draw_top_view()
+                self.draw_ui()
+                pygame.display.flip()
 
-            pygame.display.flip()
             self.clock.tick(60)
 
         pygame.quit()
