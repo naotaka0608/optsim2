@@ -13,7 +13,7 @@ class Ray:
     def __init__(self, origin: np.ndarray, direction: np.ndarray, intensity: float = 1.0):
         """
         Args:
-            origin: 光線の始点 (x, y)
+            origin: 光線の始点 (x, y, z)
             direction: 光線の方向ベクトル (正規化される)
             intensity: 光線の強度 (0.0 - 1.0)
         """
@@ -50,8 +50,13 @@ class OpticsEngine:
         self.rays = []
         self.balls = []
 
-    def add_ball(self, position: Tuple[float, float], radius: float):
-        """球を追加"""
+    def add_ball(self, position: Tuple[float, float, float], radius: float):
+        """球を追加
+
+        Args:
+            position: 球の中心位置 (x, y, z)
+            radius: 球の半径
+        """
         self.balls.append({
             'position': np.array(position, dtype=float),
             'radius': radius
@@ -209,7 +214,7 @@ class OpticsEngine:
 
             # 水面での屈折
             if hit_type == 'water':
-                normal = np.array([0, -1], dtype=float)  # 水面の法線（上向き）
+                normal = np.array([0, -1, 0], dtype=float)  # 水面の法線（上向き、3D）
 
                 # 現在の媒質を判定
                 if ray.origin[1] < self.water_level:
@@ -260,6 +265,66 @@ class OpticsEngine:
             direction = np.array([math.sin(angle), math.cos(angle)])
             ray = Ray(position, direction)
             rays.append(self.trace_ray(ray))
+
+        self.rays = rays
+        return rays
+
+    def create_light_source_3d(self, position: Tuple[float, float, float], num_rays_radial: int = 20, num_rays_circular: int = 12, spread_angle: float = np.pi/3, center_angle: float = 0.0) -> List[Ray]:
+        """
+        3D点光源から円錐状に放射される光線群を生成
+
+        Args:
+            position: 光源の位置 (x, y, z)
+            num_rays_radial: 放射方向の光線数（中心からの距離レベル）
+            num_rays_circular: 円周方向の光線数
+            spread_angle: 光の広がり角度（ラジアン）
+            center_angle: 光の中心方向の角度（ラジアン、0は下向き、正の値で時計回り）
+
+        Returns:
+            光線のリスト
+        """
+        rays = []
+        position_3d = np.array(position, dtype=float)
+
+        # 中心軸方向
+        center_dir = np.array([math.sin(center_angle), math.cos(center_angle), 0.0])
+
+        # 中心軸に1本の光線を追加
+        ray = Ray(position_3d, center_dir)
+        rays.append(self.trace_ray(ray))
+
+        # 円錐上に均等に光線を配置
+        for i in range(1, num_rays_radial):
+            # 中心軸からの角度（0からspread_angle/2まで）
+            theta = (spread_angle / 2) * (i / (num_rays_radial - 1))
+
+            # この角度の円周上に光線を配置
+            # 円周上の光線数は半径に応じて調整（外側ほど多く）
+            num_rays_at_level = max(1, int(num_rays_circular * i / num_rays_radial))
+
+            for j in range(num_rays_at_level):
+                # 円周上の角度
+                phi = (2 * math.pi * j) / num_rays_at_level
+
+                # 球面座標系での方向ベクトル（中心軸を基準）
+                # thetaは中心軸からの角度、phiは円周角度
+                local_x = math.sin(theta) * math.cos(phi)
+                local_y = math.cos(theta)
+                local_z = math.sin(theta) * math.sin(phi)
+
+                # 中心軸の向きに合わせて回転
+                # center_angleの回転を適用
+                cos_a = math.cos(center_angle)
+                sin_a = math.sin(center_angle)
+
+                direction = np.array([
+                    local_x * cos_a + local_y * sin_a,
+                    -local_x * sin_a + local_y * cos_a,
+                    local_z
+                ], dtype=float)
+
+                ray = Ray(position_3d, direction)
+                rays.append(self.trace_ray(ray))
 
         self.rays = rays
         return rays

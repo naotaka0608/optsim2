@@ -209,9 +209,11 @@ class OpticsSimulator:
         # 水面の位置を設定
         self.engine.set_water_level(self.view_height * 0.5)
 
-        # 球を追加（水中）
+        # 球を追加（水中、3D座標）
         ball_y = self.view_height * 0.7
-        self.engine.add_ball((self.view_width // 2, ball_y), 40)
+        ball_x = self.view_width // 2
+        ball_z = 0  # Z軸中心
+        self.engine.add_ball((ball_x, ball_y, ball_z), 40)
 
     def init_opengl(self):
         """OpenGLの初期化"""
@@ -318,16 +320,15 @@ class OpticsSimulator:
         # 水面を描画
         self.draw_water_plane_3d()
 
-        # 球を描画（2D座標を3D座標に変換）
+        # 球を描画（3D座標を使用）
         for ball in self.engine.balls:
-            x_2d, y_2d = ball['position']
-            # 2D座標系を3D座標系に変換
-            x_3d = x_2d - self.view_width / 2
-            y_3d = -(y_2d - self.view_height / 2)
-            z_3d = 0  # 横から見た図なのでZ=0
+            x_3d, y_3d, z_3d = ball['position']
+            # ビュー座標系に変換
+            x_3d_view = x_3d - self.view_width / 2
+            y_3d_view = -(y_3d - self.view_height / 2)
 
             # 球の色（水中なので少し青みがかった色）
-            self.draw_sphere_3d(x_3d, y_3d, z_3d, ball['radius'], (0.7, 0.8, 0.9))
+            self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.7, 0.8, 0.9))
 
         # 光源を描画
         light_x_2d, light_y_2d = self.light_position
@@ -338,7 +339,7 @@ class OpticsSimulator:
         # 光源（小さな黄色い球）
         self.draw_sphere_3d(light_x_3d, light_y_3d, light_z_3d, 10, (1.0, 1.0, 0.3))
 
-        # 光線を描画
+        # 光線を描画（3D座標を使用）
         for ray in self.engine.rays:
             if len(ray.path) < 2:
                 continue
@@ -348,16 +349,16 @@ class OpticsSimulator:
             color = (1.0 * intensity_factor, 0.8 * intensity_factor, 0.2 * intensity_factor)
 
             for i in range(len(ray.path) - 1):
-                p1_2d = ray.path[i]
-                p2_2d = ray.path[i + 1]
+                p1 = ray.path[i]
+                p2 = ray.path[i + 1]
 
-                # 2D座標を3D座標に変換
-                p1_3d = (p1_2d[0] - self.view_width / 2,
-                        -(p1_2d[1] - self.view_height / 2),
-                        0)
-                p2_3d = (p2_2d[0] - self.view_width / 2,
-                        -(p2_2d[1] - self.view_height / 2),
-                        0)
+                # ビュー座標系に変換
+                p1_3d = (p1[0] - self.view_width / 2,
+                        -(p1[1] - self.view_height / 2),
+                        p1[2])
+                p2_3d = (p2[0] - self.view_width / 2,
+                        -(p2[1] - self.view_height / 2),
+                        p2[2])
 
                 self.draw_line_3d(p1_3d, p2_3d, color, 1.5)
 
@@ -521,11 +522,14 @@ class OpticsSimulator:
 
         # 球を描画（光強度に応じて色付け）
         for ball in self.engine.balls:
-            pos = ball['position']
+            pos_3d = ball['position']
             radius = ball['radius']
 
+            # 3D座標からX-Y平面（正面図）を取得
+            pos_2d = (pos_3d[0], pos_3d[1])
+
             # ズーム適用した座標と半径
-            zoomed_pos = (pos[0] * zoom, pos[1] * zoom)
+            zoomed_pos = (pos_2d[0] * zoom, pos_2d[1] * zoom)
             zoomed_radius = radius * zoom
 
             # 最大強度を取得
@@ -557,9 +561,10 @@ class OpticsSimulator:
             # 球の輪郭
             pygame.draw.circle(view_surface, (200, 50, 50), (int(zoomed_pos[0]), int(zoomed_pos[1])), int(zoomed_radius), 2)
 
-        # 光線を描画
+        # 光線を描画（X-Y平面への投影）
         for ray in self.engine.rays:
             if len(ray.path) > 1:
+                # 3D座標からX-Y平面（正面図）へ投影
                 points = [(int(p[0] * zoom), int(p[1] * zoom)) for p in ray.path]
                 # 光線の強度に応じて色を変える
                 alpha = int(ray.intensity * 255)
@@ -670,17 +675,17 @@ class OpticsSimulator:
 
         # 球を描画（横図のY座標を上面図のY座標に変換）
         for ball in self.engine.balls:
-            pos = ball['position']
+            pos_3d = ball['position']
             radius = ball['radius']
             top_x = int((self.view_width // 2) * zoom)  # 画面中央（X軸は固定）
-            top_y = int(pos[1] * zoom)  # 横図のY座標をそのまま使用
+            top_y = int(pos_3d[1] * zoom)  # 3D座標のY座標をそのまま使用
             pygame.draw.circle(view_surface, self.COLOR_BALL, (top_x, top_y), int(radius * zoom))
             pygame.draw.circle(view_surface, (200, 50, 50), (top_x, top_y), int(radius * zoom), max(2, int(2 * zoom)))
 
         # 光線を縦線として描画（上から下に向かう、画面中央から広がる）
         num_rays = len(self.engine.rays)
 
-        # 球のY座標を取得
+        # 球のY座標を取得（3D座標のY成分）
         ball_y = int(self.engine.balls[0]['position'][1] * zoom) if self.engine.balls else int((self.view_height - 150) * zoom)
 
         for idx, ray in enumerate(self.engine.rays):
@@ -1065,9 +1070,14 @@ class OpticsSimulator:
 
     def update_simulation(self):
         """シミュレーションを更新"""
-        self.engine.create_light_source(
-            self.light_position,
-            num_rays=50,  # 光線の本数を増やす
+        # 光源位置を3Dに変換
+        light_pos_3d = (self.light_position[0], self.light_position[1], 0)
+
+        # 3D光源を生成
+        self.engine.create_light_source_3d(
+            light_pos_3d,
+            num_rays_radial=20,  # 放射方向の光線数
+            num_rays_circular=12,  # 円周方向の光線数
             spread_angle=self.light_spread,
             center_angle=self.light_angle
         )
