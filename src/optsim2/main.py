@@ -277,7 +277,7 @@ class OpticsSimulator:
         glEnable(GL_LIGHTING)
 
     def draw_water_plane_3d(self):
-        """3D水面を描画"""
+        """3D水面を描画（半透明）"""
         # 水面のY座標を計算（2D座標系を3D座標系に変換）
         water_y = -(self.engine.water_level - self.view_height / 2)
 
@@ -285,8 +285,8 @@ class OpticsSimulator:
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
-        # 水面の平面
-        glColor4f(0.2, 0.5, 0.8, 0.3)
+        # 水面の平面（半透明）
+        glColor4f(0.2, 0.5, 0.8, 0.4)
         size = 500
         glBegin(GL_QUADS)
         glVertex3f(-size, water_y, -size)
@@ -317,10 +317,7 @@ class OpticsSimulator:
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         self.setup_3d_perspective()
 
-        # 水面を描画
-        self.draw_water_plane_3d()
-
-        # 球を描画（3D座標を使用）
+        # 球を描画（3D座標を使用）- 不透明なものを先に描画
         for ball in self.engine.balls:
             x_3d, y_3d, z_3d = ball['position']
             # ビュー座標系に変換
@@ -370,6 +367,9 @@ class OpticsSimulator:
         self.draw_line_3d((0, 0, 0), (0, axis_length, 0), (0, 1, 0), 2)
         # Z軸（青）
         self.draw_line_3d((0, 0, 0), (0, 0, axis_length), (0, 0, 1), 2)
+
+        # 水面を最後に描画（半透明なので）
+        self.draw_water_plane_3d()
 
     def _set_light_angle(self, angle_deg: float):
         """光の角度を設定（スライダー用コールバック）"""
