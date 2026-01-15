@@ -207,6 +207,9 @@ class OpticsSimulator:
 
         # 3Dビューモード設定
         self.view_mode_3d = False  # False=2Dモード, True=3Dモード
+        self.view_mode_raytracing = False  # レイトレーシング風3D描画モード（未使用）
+        self.view_mode_natural_3d = False  # 自然光3Dモード（キー4）
+        self.raytracing_image = None  # レイトレーシング結果のサーフェス
         self.camera_rotation = [20.0, 45.0]  # [pitch, yaw] in degrees
         self.camera_distance = 800.0
         self.camera_target = [0.0, 0.0, 0.0]  # カメラの注視点（平行移動用）
@@ -240,6 +243,30 @@ class OpticsSimulator:
         glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.8, 0.8, 0.8, 1])
 
         glClearColor(0.1, 0.1, 0.15, 1.0)
+
+    def init_opengl_natural(self):
+        """自然光3DモードのOpenGL初期化"""
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+        glEnable(GL_LIGHT1)
+        glEnable(GL_COLOR_MATERIAL)
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
+
+        # メインライト（太陽光のような指向性ライト）
+        glLightfv(GL_LIGHT0, GL_POSITION, [0.5, 1.0, 0.8, 0])
+        glLightfv(GL_LIGHT0, GL_AMBIENT, [0.4, 0.4, 0.45, 1])
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.9, 0.9, 0.85, 1])
+        glLightfv(GL_LIGHT0, GL_SPECULAR, [1.0, 1.0, 0.95, 1])
+
+        # フィルライト（影を和らげる補助光）
+        glLightfv(GL_LIGHT1, GL_POSITION, [-0.5, 0.3, -0.5, 0])
+        glLightfv(GL_LIGHT1, GL_AMBIENT, [0.1, 0.1, 0.15, 1])
+        glLightfv(GL_LIGHT1, GL_DIFFUSE, [0.3, 0.35, 0.4, 1])
+        glLightfv(GL_LIGHT1, GL_SPECULAR, [0.2, 0.2, 0.25, 1])
+
+        # 背景色（スカイブルーのグラデーション風）
+        glClearColor(0.6, 0.75, 0.9, 1.0)
 
     def setup_3d_perspective(self):
         """3D透視投影の設定"""
@@ -381,6 +408,194 @@ class OpticsSimulator:
 
         # 水面を最後に描画（半透明なので）
         self.draw_water_plane_3d()
+
+    def draw_3d_view_natural(self):
+        """自然光3Dビュー全体を描画（光線なし）"""
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        self.setup_3d_perspective()
+
+        # 球を描画（3D座標を使用）- 不透明なものを先に描画
+        for ball in self.engine.balls:
+            x_3d, y_3d, z_3d = ball['position']
+            # ビュー座標系に変換
+            x_3d_view = x_3d - self.view_width / 2
+            y_3d_view = -(y_3d - self.view_height / 2)
+
+            # 球の色（自然な色合い）
+            self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.85, 0.75, 0.7))
+
+        # 座標軸を描画（デバッグ用）
+        axis_length = 100
+        # X軸（赤）
+        self.draw_line_3d((0, 0, 0), (axis_length, 0, 0), (1, 0, 0), 2)
+        # Y軸（緑）
+        self.draw_line_3d((0, 0, 0), (0, axis_length, 0), (0, 1, 0), 2)
+        # Z軸（青）
+        self.draw_line_3d((0, 0, 0), (0, 0, axis_length), (0, 0, 1), 2)
+
+        # 水面を最後に描画（半透明なので）
+        self.draw_water_plane_3d()
+
+    def render_raytracing(self):
+        """フォンシェーディングで光源・水面・球を高速描画"""
+        render_width = 500
+        render_height = 400
+
+        self.raytracing_image = pygame.Surface((render_width, render_height))
+
+        # 背景グラデーション（上は明るく、下は暗く）
+        for y in range(render_height):
+            t = y / render_height
+            r = int(60 + 40 * (1 - t))
+            g = int(70 + 50 * (1 - t))
+            b = int(100 + 60 * (1 - t))
+            pygame.draw.line(self.raytracing_image, (r, g, b), (0, y), (render_width, y))
+
+        # 水面の位置（シミュレーションの水面位置に対応）
+        water_ratio = self.engine.water_level / self.view_height
+        water_screen_y = int(render_height * water_ratio * 0.8 + render_height * 0.1)
+
+        # 球の位置（シミュレーションの球位置に対応）
+        ball_screen_x = render_width // 2
+        ball_screen_y = int(water_screen_y + render_height * 0.25)
+        ball_screen_radius = 50
+
+        # 光源位置
+        light_ratio_x = self.light_position[0] / self.view_width
+        light_ratio_y = self.light_position[1] / self.view_height
+        light_x = int(render_width * light_ratio_x)
+        light_y = int(render_height * light_ratio_y * 0.5)
+
+        # 床を描画
+        floor_y = render_height - 40
+        for y in range(floor_y, render_height):
+            t = (y - floor_y) / (render_height - floor_y)
+            gray = int(50 + 30 * (1 - t))
+            pygame.draw.line(self.raytracing_image, (gray, gray + 10, gray + 20), (0, y), (render_width, y))
+
+        # 影を描画
+        shadow_x = ball_screen_x + (ball_screen_x - light_x) // 4
+        shadow_w = int(ball_screen_radius * 1.2)
+        shadow_h = int(ball_screen_radius * 0.25)
+        shadow_surf = pygame.Surface((shadow_w * 2, shadow_h * 2), pygame.SRCALPHA)
+        pygame.draw.ellipse(shadow_surf, (20, 25, 30, 120), (0, 0, shadow_w * 2, shadow_h * 2))
+        self.raytracing_image.blit(shadow_surf, (shadow_x - shadow_w, floor_y - shadow_h))
+
+        # 水面を描画（半透明）
+        water_surf = pygame.Surface((render_width, floor_y - water_screen_y), pygame.SRCALPHA)
+        water_surf.fill((70, 120, 180, 80))
+        self.raytracing_image.blit(water_surf, (0, water_screen_y))
+
+        # 水面の境界線
+        pygame.draw.line(self.raytracing_image, (100, 150, 200), (0, water_screen_y), (render_width, water_screen_y), 2)
+
+        # 球をフォンシェーディングで描画
+        self.draw_phong_sphere(ball_screen_x, ball_screen_y, ball_screen_radius, light_x, light_y)
+
+        # 光源を描画（グロー効果付き）
+        for r in range(25, 0, -3):
+            alpha = int(200 * (1 - r / 25))
+            pygame.draw.circle(self.raytracing_image, (255, 255, 200), (light_x, light_y), r)
+        pygame.draw.circle(self.raytracing_image, (255, 255, 240), (light_x, light_y), 8)
+
+        # 光線を描画
+        num_rays = 9
+        if self.light_spread > 0.01:
+            for i in range(num_rays):
+                angle = self.light_angle + self.light_spread * (i / (num_rays - 1) - 0.5)
+
+                # 水面との交点を計算
+                if math.cos(angle) > 0.01:
+                    t_water = (water_screen_y - light_y) / math.cos(angle)
+                    water_x = int(light_x + t_water * math.sin(angle))
+
+                    if 0 <= water_x <= render_width:
+                        # 空気中の光線（黄色）
+                        pygame.draw.line(self.raytracing_image, (255, 220, 100),
+                                        (light_x, light_y), (water_x, water_screen_y), 2)
+
+                        # 屈折計算
+                        sin_i = math.sin(angle)
+                        sin_r = sin_i / self.engine.water_refractive_index
+                        if abs(sin_r) <= 1:
+                            refract_angle = math.asin(sin_r)
+                            length = 150
+                            end_x = int(water_x + length * math.sin(refract_angle))
+                            end_y = int(water_screen_y + length * math.cos(refract_angle))
+                            # 水中の光線（オレンジがかった色）
+                            pygame.draw.line(self.raytracing_image, (255, 180, 80),
+                                            (water_x, water_screen_y), (end_x, end_y), 2)
+
+    def draw_phong_sphere(self, cx, cy, radius, light_x, light_y):
+        """フォンシェーディングで球を描画（高画質）"""
+        light_z = -150
+        light_dir = np.array([light_x - cx, light_y - cy, light_z], dtype=float)
+        light_dir = light_dir / np.linalg.norm(light_dir)
+        view_dir = np.array([0, 0, -1], dtype=float)
+
+        # シェーディングパラメータ
+        ambient = 0.15
+        diffuse_k = 0.55
+        specular_k = 0.4
+        shininess = 40
+        base_color = np.array([140, 150, 170], dtype=float)
+
+        for y in range(-radius, radius + 1):
+            for x in range(-radius, radius + 1):
+                dist_sq = x * x + y * y
+                if dist_sq <= radius * radius:
+                    z = math.sqrt(radius * radius - dist_sq)
+                    normal = np.array([x / radius, y / radius, -z / radius], dtype=float)
+
+                    # 環境光
+                    color = base_color * ambient
+
+                    # 拡散光
+                    diff = max(0, np.dot(normal, -light_dir))
+                    color = color + base_color * diffuse_k * diff
+
+                    # 鏡面反射
+                    reflect = 2 * np.dot(normal, -light_dir) * normal - (-light_dir)
+                    spec = max(0, np.dot(reflect, -view_dir)) ** shininess
+                    color = color + np.array([255, 255, 255]) * specular_k * spec
+
+                    r = int(min(255, max(0, color[0])))
+                    g = int(min(255, max(0, color[1])))
+                    b = int(min(255, max(0, color[2])))
+
+                    px, py = cx + x, cy + y
+                    if 0 <= px < self.raytracing_image.get_width() and 0 <= py < self.raytracing_image.get_height():
+                        self.raytracing_image.set_at((px, py), (r, g, b))
+
+    def draw_raytracing_view(self):
+        """レイトレーシング結果を表示（フルスクリーン）"""
+        if self.raytracing_image:
+            self.screen.blit(self.raytracing_image, (0, 0))
+
+        # 操作説明
+        help_text = self.font.render("2: 2Dモード  3: 3Dモード  4: レイトレ再描画", True, (255, 255, 255))
+        self.screen.blit(help_text, (10, 10))
+
+    def draw_raytracing_2d(self):
+        """レイトレーシング結果を2Dビューエリアに表示"""
+        offset_x = self.ui_panel_width + self.view_margin
+        offset_y = 60
+
+        if self.raytracing_image:
+            # ビューエリアに合わせてスケール
+            scaled = pygame.transform.smoothscale(
+                self.raytracing_image,
+                (self.view_width * 2 + self.view_margin, self.view_height)
+            )
+            self.screen.blit(scaled, (offset_x, offset_y))
+
+        # 枠線
+        pygame.draw.rect(self.screen, (100, 100, 100),
+                        (offset_x, offset_y, self.view_width * 2 + self.view_margin, self.view_height), 2)
+
+        # タイトル
+        title = self.title_font.render("レイトレーシング（4キーで再描画）", True, self.COLOR_TEXT)
+        self.screen.blit(title, (offset_x, 20))
 
     def _set_light_angle(self, angle_deg: float):
         """光の角度を設定（スライダー用コールバック）"""
@@ -879,17 +1094,30 @@ class OpticsSimulator:
                     self.update_simulation()
                 elif event.key == pygame.K_2:
                     # 2Dモードに切り替え
-                    if self.view_mode_3d:
+                    if self.view_mode_3d or self.view_mode_raytracing or self.view_mode_natural_3d:
                         self.view_mode_3d = False
+                        self.view_mode_raytracing = False
+                        self.view_mode_natural_3d = False
                         # Pygameの2D描画モードに戻す
                         pygame.display.set_mode((self.width, self.height))
                 elif event.key == pygame.K_3:
-                    # 3Dモードに切り替え
+                    # 3Dモード（光線あり）に切り替え
                     if not self.view_mode_3d:
                         self.view_mode_3d = True
+                        self.view_mode_raytracing = False
+                        self.view_mode_natural_3d = False
                         # OpenGL有効のウィンドウに切り替え
                         pygame.display.set_mode((self.width, self.height), DOUBLEBUF | OPENGL)
                         self.init_opengl()
+                elif event.key == pygame.K_4:
+                    # 自然光3Dモード（光線なし）に切り替え
+                    if not self.view_mode_natural_3d:
+                        self.view_mode_3d = False
+                        self.view_mode_raytracing = False
+                        self.view_mode_natural_3d = True
+                        # OpenGL有効のウィンドウに切り替え
+                        pygame.display.set_mode((self.width, self.height), DOUBLEBUF | OPENGL)
+                        self.init_opengl_natural()
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左クリック
@@ -929,7 +1157,7 @@ class OpticsSimulator:
                 elif event.button == 2:  # マウスホイールクリック（中クリック）
                     mouse_pos = pygame.mouse.get_pos()
                     self.drag_start_pos = mouse_pos
-                    if self.view_mode_3d:
+                    if self.view_mode_3d or self.view_mode_natural_3d:
                         # 3Dモード時はカメラ平行移動
                         self.dragging_camera_pan = True
                         self.camera_pan_start = mouse_pos
@@ -948,13 +1176,13 @@ class OpticsSimulator:
                               top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
                             self.dragging_top_view = True
                 elif event.button == 3:  # 右クリック
-                    if self.view_mode_3d:
+                    if self.view_mode_3d or self.view_mode_natural_3d:
                         # 3Dモード時はカメラ回転
                         mouse_pos = pygame.mouse.get_pos()
                         self.dragging_camera = True
                         self.camera_drag_start = mouse_pos
                 elif event.button == 4:  # マウスホイール上（ズームイン）
-                    if self.view_mode_3d:
+                    if self.view_mode_3d or self.view_mode_natural_3d:
                         # 3Dモード時はカメラ距離を縮める（ズームイン）
                         self.camera_distance = max(200.0, self.camera_distance - 30.0)
                     else:
@@ -973,7 +1201,7 @@ class OpticsSimulator:
                               top_view_y <= mouse_pos[1] <= top_view_y + self.view_height):
                             self.top_view_zoom = min(3.0, self.top_view_zoom * 1.1)
                 elif event.button == 5:  # マウスホイール下（ズームアウト）
-                    if self.view_mode_3d:
+                    if self.view_mode_3d or self.view_mode_natural_3d:
                         # 3Dモード時はカメラ距離を伸ばす（ズームアウト）
                         self.camera_distance = min(2000.0, self.camera_distance + 30.0)
                     else:
@@ -1012,9 +1240,9 @@ class OpticsSimulator:
                     dx = mouse_pos[0] - self.camera_drag_start[0]
                     dy = mouse_pos[1] - self.camera_drag_start[1]
 
-                    # カメラの回転を更新
-                    self.camera_rotation[1] += dx * 0.5  # yaw
-                    self.camera_rotation[0] -= dy * 0.5  # pitch
+                    # カメラの回転を更新（マウスの動きに合わせて直感的に）
+                    self.camera_rotation[1] -= dx * 0.5  # yaw（左右反転）
+                    self.camera_rotation[0] += dy * 0.5  # pitch（上下反転）
 
                     # pitch を -89 ~ 89 度に制限
                     self.camera_rotation[0] = max(-89, min(89, self.camera_rotation[0]))
@@ -1038,11 +1266,11 @@ class OpticsSimulator:
                     up_y = 1
                     up_z = 0
 
-                    # 移動量を計算（感度調整）
+                    # 移動量を計算（感度調整、マウスの動きに合わせて直感的に）
                     move_speed = 0.5
-                    self.camera_target[0] -= (right_x * dx + up_x * dy) * move_speed
-                    self.camera_target[1] += dy * move_speed
-                    self.camera_target[2] -= (right_z * dx + up_z * dy) * move_speed
+                    self.camera_target[0] += (right_x * dx) * move_speed
+                    self.camera_target[1] -= dy * move_speed
+                    self.camera_target[2] += (right_z * dx) * move_speed
 
                     self.camera_pan_start = mouse_pos
                 elif self.dragging_light:
@@ -1122,11 +1350,21 @@ class OpticsSimulator:
 
             # 描画
             if self.view_mode_3d:
-                # 3Dモード
+                # 3Dモード（光線あり）
                 self.draw_3d_view()
                 pygame.display.flip()
+            elif self.view_mode_natural_3d:
+                # 自然光3Dモード（光線なし）
+                self.draw_3d_view_natural()
+                pygame.display.flip()
+            elif self.view_mode_raytracing:
+                # レイトレーシング風2Dモード（未使用）
+                self.screen.fill(self.COLOR_BG)
+                self.draw_raytracing_2d()
+                self.draw_ui()
+                pygame.display.flip()
             else:
-                # 2Dモード
+                # 通常の2Dモード
                 self.screen.fill(self.COLOR_BG)
                 self.draw_side_view()
                 self.draw_top_view()
