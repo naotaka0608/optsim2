@@ -249,21 +249,14 @@ class OpticsSimulator:
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_LIGHTING)
         glEnable(GL_LIGHT0)
-        glEnable(GL_LIGHT1)
+        glDisable(GL_LIGHT1)  # フィルライトは無効
         glEnable(GL_COLOR_MATERIAL)
         glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
 
-        # メインライト（太陽光のような指向性ライト）
-        glLightfv(GL_LIGHT0, GL_POSITION, [0.5, 1.0, 0.8, 0])
-        glLightfv(GL_LIGHT0, GL_AMBIENT, [0.4, 0.4, 0.45, 1])
-        glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.9, 0.9, 0.85, 1])
+        # メインライト（点光源として使用、位置は後で更新）
+        glLightfv(GL_LIGHT0, GL_AMBIENT, [0.1, 0.1, 0.1, 1])  # 環境光を抑える
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, [1.0, 1.0, 0.9, 1])
         glLightfv(GL_LIGHT0, GL_SPECULAR, [1.0, 1.0, 0.95, 1])
-
-        # フィルライト（影を和らげる補助光）
-        glLightfv(GL_LIGHT1, GL_POSITION, [-0.5, 0.3, -0.5, 0])
-        glLightfv(GL_LIGHT1, GL_AMBIENT, [0.1, 0.1, 0.15, 1])
-        glLightfv(GL_LIGHT1, GL_DIFFUSE, [0.3, 0.35, 0.4, 1])
-        glLightfv(GL_LIGHT1, GL_SPECULAR, [0.2, 0.2, 0.25, 1])
 
         # 背景色（スカイブルーのグラデーション風）
         glClearColor(0.6, 0.75, 0.9, 1.0)
@@ -409,10 +402,98 @@ class OpticsSimulator:
         # 水面を最後に描画（半透明なので）
         self.draw_water_plane_3d()
 
+    def draw_light_glow_3d(self, x, y, z, light_angle, light_spread):
+        """光源からのグロー効果（光の放射）を描画"""
+        glDisable(GL_LIGHTING)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE)  # 加算ブレンド
+
+        # 光源本体（明るい黄色の球）
+        glColor4f(1.0, 1.0, 0.8, 1.0)
+        glPushMatrix()
+        glTranslatef(x, y, z)
+        quadric = gluNewQuadric()
+        gluSphere(quadric, 12, 16, 16)
+        gluDeleteQuadric(quadric)
+        glPopMatrix()
+
+        # グロー効果（複数の半透明の球で表現）
+        for i in range(3):
+            alpha = 0.3 - i * 0.08
+            radius = 20 + i * 15
+            glColor4f(1.0, 0.95, 0.7, alpha)
+            glPushMatrix()
+            glTranslatef(x, y, z)
+            quadric = gluNewQuadric()
+            gluSphere(quadric, radius, 12, 12)
+            gluDeleteQuadric(quadric)
+            glPopMatrix()
+
+        # 光線（2Dの角度に合わせた方向に照射）
+        # light_angle: 0が下向き、正が時計回り
+        # 3D座標系: Y軸が上向きなので、下向きは-Y方向
+        center_dir_x = math.sin(light_angle)
+        center_dir_y = -math.cos(light_angle)  # 下向きが基準
+
+        glLineWidth(2.0)
+        num_rays = 12
+        ray_length = 200
+
+        for i in range(num_rays):
+            # 円周上の角度
+            phi = (2 * math.pi * i) / num_rays
+            # 広がり角度（中心からの角度）
+            theta = light_spread / 2 * 0.8  # 少し狭めに
+
+            # 中心方向からの広がりを計算
+            # X-Y平面での広がり
+            spread_x = math.sin(theta) * math.cos(phi)
+            spread_y = math.sin(theta) * math.sin(phi)
+
+            # 光線の終点方向
+            dir_x = center_dir_x + spread_x * math.cos(light_angle)
+            dir_y = center_dir_y - spread_y
+            dir_z = spread_x * math.sin(light_angle) + math.sin(theta) * math.sin(phi)
+
+            # 正規化
+            length = math.sqrt(dir_x**2 + dir_y**2 + dir_z**2)
+            if length > 0:
+                dir_x /= length
+                dir_y /= length
+                dir_z /= length
+
+            end_x = x + ray_length * dir_x
+            end_y = y + ray_length * dir_y
+            end_z = z + ray_length * dir_z
+
+            # グラデーション効果のある光線
+            glBegin(GL_LINES)
+            glColor4f(1.0, 1.0, 0.6, 0.5)
+            glVertex3f(x, y, z)
+            glColor4f(1.0, 0.9, 0.5, 0.0)
+            glVertex3f(end_x, end_y, end_z)
+            glEnd()
+
+        glDisable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glEnable(GL_LIGHTING)
+
     def draw_3d_view_natural(self):
-        """自然光3Dビュー全体を描画（光線なし）"""
+        """自然光3Dビュー全体を描画（光線なし、2D光源位置に連動）"""
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         self.setup_3d_perspective()
+
+        # 2Dの光源位置から3Dライト位置を計算
+        light_x_2d, light_y_2d = self.light_position
+        light_x_3d = light_x_2d - self.view_width / 2
+        light_y_3d = -(light_y_2d - self.view_height / 2)
+        light_z_3d = 0
+
+        # ライト位置を更新（点光源として設定）
+        glLightfv(GL_LIGHT0, GL_POSITION, [light_x_3d, light_y_3d, light_z_3d, 1.0])
+
+        # 光源のグロー効果を描画（2Dの角度と広がりを反映）
+        self.draw_light_glow_3d(light_x_3d, light_y_3d, light_z_3d, self.light_angle, self.light_spread)
 
         # 球を描画（3D座標を使用）- 不透明なものを先に描画
         for ball in self.engine.balls:
