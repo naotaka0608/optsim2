@@ -150,6 +150,7 @@ class OpticsSimulator:
         self.light_position = (self.view_width // 2, 50)
         self.light_angle = 0.0  # 光の角度（ラジアン、0は下向き）
         self.light_spread = np.pi / 2  # 光の広がり角度
+        self.light_intensity = 1.0  # 光の強度（0.0〜2.0）
         self.dragging_light = False
 
         # 球の光強度マップ（角度ごとの強度を記録）
@@ -203,6 +204,14 @@ class OpticsSimulator:
             1.00, 2.00, self.engine.water_refractive_index,
             "屈折率",
             lambda v: self._set_refractive_index(v)
+        ))
+
+        # 光の強度スライダー
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 4, slider_width,
+            0.0, 2.0, self.light_intensity,
+            "光の強度",
+            lambda v: self._set_light_intensity(v)
         ))
 
         # 3Dビューモード設定
@@ -402,14 +411,17 @@ class OpticsSimulator:
         # 水面を最後に描画（半透明なので）
         self.draw_water_plane_3d()
 
-    def draw_light_glow_3d(self, x, y, z, light_angle, light_spread):
+    def draw_light_glow_3d(self, x, y, z, light_angle, light_spread, intensity=1.0):
         """光源からのグロー効果（光の放射）を描画"""
         glDisable(GL_LIGHTING)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE)  # 加算ブレンド
 
+        # 強度に応じた明るさ
+        bright = min(1.0, intensity)
+
         # 光源本体（明るい黄色の球）
-        glColor4f(1.0, 1.0, 0.8, 1.0)
+        glColor4f(bright, bright, bright * 0.8, 1.0)
         glPushMatrix()
         glTranslatef(x, y, z)
         quadric = gluNewQuadric()
@@ -417,11 +429,11 @@ class OpticsSimulator:
         gluDeleteQuadric(quadric)
         glPopMatrix()
 
-        # グロー効果（複数の半透明の球で表現）
+        # グロー効果（複数の半透明の球で表現）- 強度に応じてサイズと明るさ変化
         for i in range(3):
-            alpha = 0.3 - i * 0.08
-            radius = 20 + i * 15
-            glColor4f(1.0, 0.95, 0.7, alpha)
+            alpha = (0.3 - i * 0.08) * intensity
+            radius = (20 + i * 15) * (0.5 + intensity * 0.5)
+            glColor4f(bright, bright * 0.95, bright * 0.7, alpha)
             glPushMatrix()
             glTranslatef(x, y, z)
             quadric = gluNewQuadric()
@@ -437,7 +449,7 @@ class OpticsSimulator:
 
         glLineWidth(2.0)
         num_rays = 12
-        ray_length = 200
+        ray_length = 200 * (0.5 + intensity * 0.5)  # 強度に応じて長さ変化
 
         for i in range(num_rays):
             # 円周上の角度
@@ -466,11 +478,12 @@ class OpticsSimulator:
             end_y = y + ray_length * dir_y
             end_z = z + ray_length * dir_z
 
-            # グラデーション効果のある光線
+            # グラデーション効果のある光線（強度に応じた明るさ）
+            ray_alpha = 0.5 * intensity
             glBegin(GL_LINES)
-            glColor4f(1.0, 1.0, 0.6, 0.5)
+            glColor4f(bright, bright, bright * 0.6, ray_alpha)
             glVertex3f(x, y, z)
-            glColor4f(1.0, 0.9, 0.5, 0.0)
+            glColor4f(bright, bright * 0.9, bright * 0.5, 0.0)
             glVertex3f(end_x, end_y, end_z)
             glEnd()
 
@@ -492,8 +505,13 @@ class OpticsSimulator:
         # ライト位置を更新（点光源として設定）
         glLightfv(GL_LIGHT0, GL_POSITION, [light_x_3d, light_y_3d, light_z_3d, 1.0])
 
+        # 光の強度を反映（diffuseとspecularを調整）
+        intensity = self.light_intensity
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, [intensity, intensity, intensity * 0.9, 1])
+        glLightfv(GL_LIGHT0, GL_SPECULAR, [intensity, intensity, intensity * 0.95, 1])
+
         # 光源のグロー効果を描画（2Dの角度と広がりを反映）
-        self.draw_light_glow_3d(light_x_3d, light_y_3d, light_z_3d, self.light_angle, self.light_spread)
+        self.draw_light_glow_3d(light_x_3d, light_y_3d, light_z_3d, self.light_angle, self.light_spread, self.light_intensity)
 
         # 球を描画（3D座標を使用）- 不透明なものを先に描画
         for ball in self.engine.balls:
@@ -698,6 +716,10 @@ class OpticsSimulator:
         # 小数第2位で丸める
         self.engine.water_refractive_index = round(value, 2)
         self.update_simulation()
+
+    def _set_light_intensity(self, value: float):
+        """光の強度を設定（スライダー用コールバック）"""
+        self.light_intensity = round(value, 2)
 
     def calculate_ball_intensity(self):
         """球に当たった光の強度を計算"""
