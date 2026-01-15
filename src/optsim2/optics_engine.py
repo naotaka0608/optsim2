@@ -47,6 +47,7 @@ class OpticsEngine:
         self.width = width
         self.height = height
         self.water_level = height * 0.6  # 水面の位置（画面の60%の位置）
+        self.water_refractive_index = self.N_WATER  # 水の屈折率（変更可能）
         self.rays = []
         self.balls = []
 
@@ -219,11 +220,11 @@ class OpticsEngine:
                 # 現在の媒質を判定
                 if ray.origin[1] < self.water_level:
                     # 空気から水へ
-                    n1, n2 = self.N_AIR, self.N_WATER
-                    new_medium = self.N_WATER
+                    n1, n2 = self.N_AIR, self.water_refractive_index
+                    new_medium = self.water_refractive_index
                 else:
                     # 水から空気へ
-                    n1, n2 = self.N_WATER, self.N_AIR
+                    n1, n2 = self.water_refractive_index, self.N_AIR
                     new_medium = self.N_AIR
 
                 refracted = self.refract(ray.direction, normal, n1, n2)

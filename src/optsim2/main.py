@@ -47,6 +47,9 @@ class Slider:
         # 値の表示
         if isinstance(self.value, int):
             value_text = str(self.value)
+        elif self.max_val <= 2.0 and self.min_val >= 1.0:
+            # 屈折率などの小さい範囲は小数第2位まで
+            value_text = f"{self.value:.2f}"
         else:
             value_text = f"{self.value:.1f}"
         value_surf = font.render(value_text, True, (80, 80, 80))
@@ -181,7 +184,7 @@ class OpticsSimulator:
         # 光の広がりスライダー
         self.sliders.append(Slider(
             slider_x, slider_y_start + slider_spacing, slider_width,
-            10, 180, int(np.degrees(self.light_spread)),
+            0, 180, int(np.degrees(self.light_spread)),
             "光の広がり (°)",
             lambda v: self._set_light_spread(v)
         ))
@@ -192,6 +195,14 @@ class OpticsSimulator:
             50, self.view_height - 50, int(self.engine.water_level),
             "水面位置 (px)",
             lambda v: self._set_water_level(v)
+        ))
+
+        # 屈折率スライダー
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 3, slider_width,
+            1.00, 2.00, self.engine.water_refractive_index,
+            "屈折率",
+            lambda v: self._set_refractive_index(v)
         ))
 
         # 3Dビューモード設定
@@ -384,6 +395,12 @@ class OpticsSimulator:
     def _set_water_level(self, level: float):
         """水面位置を設定（スライダー用コールバック）"""
         self.engine.water_level = level
+        self.update_simulation()
+
+    def _set_refractive_index(self, value: float):
+        """屈折率を設定（スライダー用コールバック）"""
+        # 小数第2位で丸める
+        self.engine.water_refractive_index = round(value, 2)
         self.update_simulation()
 
     def calculate_ball_intensity(self):
@@ -840,13 +857,25 @@ class OpticsSimulator:
                     self.update_simulation()
                 elif event.key == pygame.K_q:
                     # 光の広がりを狭く
-                    self.light_spread = max(np.pi / 18, self.light_spread - np.pi / 180)  # 1度ずつ
+                    self.light_spread = max(0, self.light_spread - np.pi / 180)  # 1度ずつ
                     self.sliders[1].value = int(np.degrees(self.light_spread))
                     self.update_simulation()
                 elif event.key == pygame.K_e:
                     # 光の広がりを広く
                     self.light_spread = min(np.pi, self.light_spread + np.pi / 180)  # 1度ずつ
                     self.sliders[1].value = int(np.degrees(self.light_spread))
+                    self.update_simulation()
+                elif event.key == pygame.K_n:
+                    # 屈折率を下げる（0.01刻み）
+                    new_index = max(1.00, self.engine.water_refractive_index - 0.01)
+                    self.engine.water_refractive_index = round(new_index, 2)
+                    self.sliders[3].value = self.engine.water_refractive_index
+                    self.update_simulation()
+                elif event.key == pygame.K_m:
+                    # 屈折率を上げる（0.01刻み）
+                    new_index = min(2.00, self.engine.water_refractive_index + 0.01)
+                    self.engine.water_refractive_index = round(new_index, 2)
+                    self.sliders[3].value = self.engine.water_refractive_index
                     self.update_simulation()
                 elif event.key == pygame.K_2:
                     # 2Dモードに切り替え
