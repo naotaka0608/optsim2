@@ -421,14 +421,23 @@ class OpticsSimulator:
             # 球の色（水中なので少し青みがかった色）
             self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.7, 0.8, 0.9))
 
-        # 光源を描画
+        # 光源を描画（複数光源を中央配置）
         light_x_2d, light_y_2d = self.light_position
         light_x_3d = light_x_2d - self.view_width / 2
         light_y_3d = -(light_y_2d - self.view_height / 2)
-        light_z_3d = 0
 
-        # 光源（小さな黄色い球）
-        self.draw_sphere_3d(light_x_3d, light_y_3d, light_z_3d, 10, (1.0, 1.0, 0.3))
+        # 光源の間隔をピクセルに変換
+        light_z_spacing = self.light_spacing_mm * self.mm_to_pixel
+
+        # 中心配置のオフセット計算
+        total_light_width = (self.light_count - 1) * light_z_spacing
+        start_light_z = total_light_width / 2  # +Z側から開始
+
+        for i in range(self.light_count):
+            # 中心がZ=0になるように配置
+            light_z_3d = start_light_z - i * light_z_spacing
+            # 光源（小さな黄色い球）
+            self.draw_sphere_3d(light_x_3d, light_y_3d, light_z_3d, 10, (1.0, 1.0, 0.3))
 
         # 光線を描画（3D座標を使用）
         for ray in self.engine.rays:
@@ -560,10 +569,13 @@ class OpticsSimulator:
         glLightfv(GL_LIGHT0, GL_DIFFUSE, [intensity, intensity, intensity * 0.9, 1])
         glLightfv(GL_LIGHT0, GL_SPECULAR, [intensity, intensity, intensity * 0.95, 1])
 
-        # 複数光源のグロー効果を描画
+        # 複数光源のグロー効果を描画（中央配置）
         light_z_spacing = self.light_spacing_mm * self.mm_to_pixel
+        total_light_width = (self.light_count - 1) * light_z_spacing
+        start_light_z = total_light_width / 2  # +Z側から開始
+
         for i in range(self.light_count):
-            light_z_3d = -i * light_z_spacing
+            light_z_3d = start_light_z - i * light_z_spacing
             self.draw_light_glow_3d(light_x_3d, light_y_3d, light_z_3d, self.light_angle, self.light_spread, self.light_intensity)
 
         # 最初の光源位置をOpenGLライトとして設定
@@ -914,10 +926,13 @@ class OpticsSimulator:
         # Z方向の間隔（mm単位をピクセルに変換）
         z_spacing = self.ball_spacing_mm * self.mm_to_pixel
 
-        # 中心からZ方向に配置
+        # 中心配置：全体の幅を計算し、中央がZ=0になるようにオフセット
+        total_width = (self.ball_count - 1) * z_spacing
+        start_z = total_width / 2  # 最初の球のZ位置（+Z側）
+
         for i in range(self.ball_count):
-            # 中心を0として、-Z方向に並べる
-            ball_z = -i * z_spacing
+            # 中心がZ=0になるように配置（+Zから-Zへ）
+            ball_z = start_z - i * z_spacing
             self.engine.add_ball((ball_x, ball_y, ball_z), ball_radius)
 
         # 光線を再計算
@@ -1198,14 +1213,19 @@ class OpticsSimulator:
         # 上面図: Y=0が上、Y=view_heightが下
         top_light_y = int(self.light_position[1] * zoom)
 
-        # 複数光源を描画（Z方向に配置）
+        # 複数光源を描画（独立した個数・間隔で中央配置）
         light_z_spacing = self.light_spacing_mm * self.mm_to_pixel * zoom
         halogen_width = 60 * zoom  # X方向の幅（横に長い）
         halogen_depth = 20 * zoom  # Y方向の奥行き
 
+        # 中心配置のオフセット計算
+        total_light_width = (self.light_count - 1) * light_z_spacing
+        start_light_offset = total_light_width / 2  # +Z側から開始
+
         for i in range(self.light_count):
-            # 上面図ではZ方向がX方向に対応（-Z方向が右側）
-            light_offset_x = i * light_z_spacing
+            # 中心がZ=0になるように配置（上面図では-Zが右側）
+            light_z_offset = start_light_offset - i * light_z_spacing
+            light_offset_x = -light_z_offset  # -Zが右側なので符号反転
             halogen_rect = pygame.Rect(
                 int(top_light_x - halogen_width // 2 + light_offset_x),
                 int(top_light_y - halogen_depth // 2),
@@ -1645,10 +1665,14 @@ class OpticsSimulator:
         # 光源の間隔をピクセルに変換
         light_z_spacing = self.light_spacing_mm * self.mm_to_pixel
 
+        # 中心配置：全体の幅を計算し、中央がZ=0になるようにオフセット
+        total_light_width = (self.light_count - 1) * light_z_spacing
+        start_light_z = total_light_width / 2  # 最初の光源のZ位置（+Z側）
+
         # 各光源から光線を生成
         for i in range(self.light_count):
-            # Z方向に配置（球と同じく-Z方向）
-            light_z = -i * light_z_spacing
+            # 中心がZ=0になるように配置（+Zから-Zへ）
+            light_z = start_light_z - i * light_z_spacing
             light_pos_3d = (self.light_position[0], self.light_position[1], light_z)
 
             # 3D光源を生成（光線数は光源数に応じて調整）
