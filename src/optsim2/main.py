@@ -1371,9 +1371,9 @@ class OpticsSimulator:
 
                     # 移動量を計算（感度調整、マウスの動きに合わせて直感的に）
                     move_speed = 0.5
-                    self.camera_target[0] += (right_x * dx) * move_speed
-                    self.camera_target[1] -= dy * move_speed
-                    self.camera_target[2] += (right_z * dx) * move_speed
+                    self.camera_target[0] -= (right_x * dx) * move_speed
+                    self.camera_target[1] += dy * move_speed
+                    self.camera_target[2] -= (right_z * dx) * move_speed
 
                     self.camera_pan_start = mouse_pos
                 elif self.dragging_light:
