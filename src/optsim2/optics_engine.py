@@ -327,5 +327,6 @@ class OpticsEngine:
                 ray = Ray(position_3d, direction)
                 rays.append(self.trace_ray(ray))
 
-        self.rays = rays
+        # 既存の光線に追加（複数光源対応）
+        self.rays.extend(rays)
         return rays

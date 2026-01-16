@@ -247,6 +247,24 @@ class OpticsSimulator:
             lambda v: self._set_ball_spacing_mm(v)
         ))
 
+        # 光源の個数
+        self.light_count = 15
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 8, slider_width,
+            1, 30, self.light_count,
+            "光源の個数",
+            lambda v: self._set_light_count(int(v))
+        ))
+
+        # 光源の間隔（mm単位）
+        self.light_spacing_mm = 3.0  # デフォルト3mm
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 9, slider_width,
+            1.0, 100.0, self.light_spacing_mm,
+            "光源の間隔 (mm)",
+            lambda v: self._set_light_spacing_mm(v)
+        ))
+
         # 初期状態で球を再構築
         self._rebuild_balls()
 
@@ -536,18 +554,20 @@ class OpticsSimulator:
         light_x_2d, light_y_2d = self.light_position
         light_x_3d = light_x_2d - self.view_width / 2
         light_y_3d = -(light_y_2d - self.view_height / 2)
-        light_z_3d = 0
-
-        # ライト位置を更新（点光源として設定）
-        glLightfv(GL_LIGHT0, GL_POSITION, [light_x_3d, light_y_3d, light_z_3d, 1.0])
 
         # 光の強度を反映（diffuseとspecularを調整）
         intensity = self.light_intensity
         glLightfv(GL_LIGHT0, GL_DIFFUSE, [intensity, intensity, intensity * 0.9, 1])
         glLightfv(GL_LIGHT0, GL_SPECULAR, [intensity, intensity, intensity * 0.95, 1])
 
-        # 光源のグロー効果を描画（2Dの角度と広がりを反映）
-        self.draw_light_glow_3d(light_x_3d, light_y_3d, light_z_3d, self.light_angle, self.light_spread, self.light_intensity)
+        # 複数光源のグロー効果を描画
+        light_z_spacing = self.light_spacing_mm * self.mm_to_pixel
+        for i in range(self.light_count):
+            light_z_3d = -i * light_z_spacing
+            self.draw_light_glow_3d(light_x_3d, light_y_3d, light_z_3d, self.light_angle, self.light_spread, self.light_intensity)
+
+        # 最初の光源位置をOpenGLライトとして設定
+        glLightfv(GL_LIGHT0, GL_POSITION, [light_x_3d, light_y_3d, 0, 1.0])
 
         # 球を描画（3D座標を使用）- 不透明なものを先に描画
         for ball in self.engine.balls:
@@ -557,14 +577,29 @@ class OpticsSimulator:
             y_3d_view = -(y_3d - self.view_height / 2)
 
             # 光線が球に当たっているかを判定し、当たった光線の方向と数を記録
-            # 3D空間での判定：光線のZ座標と球のZ座標が近いかどうかも考慮
+            # 3D空間での判定：光線の起点Z座標と球のZ座標が近いかどうかも考慮
             ball_hit = False
             hit_ray_dir = None
             hit_count = 0
             total_rays = len(self.engine.rays)
             ball_cx, ball_cy, ball_cz = ball['position'][0], ball['position'][1], ball['position'][2]
             ball_r = ball['radius']
+
+            # 光源の間隔を取得
+            light_z_spacing = self.light_spacing_mm * self.mm_to_pixel
+
             for ray in self.engine.rays:
+                if len(ray.path) < 1:
+                    continue
+
+                # 光線の起点（光源位置）のZ座標を取得
+                ray_origin_z = float(ray.path[0][2]) if len(ray.path[0]) > 2 else 0.0
+
+                # 光線の起点Z座標と球のZ座標が近いかチェック（光源間隔の半分以内）
+                z_tolerance = max(ball_r * 2, light_z_spacing / 2)
+                if abs(ray_origin_z - ball_cz) > z_tolerance:
+                    continue
+
                 # 光線の経路をチェック
                 ray_hits = False
                 for i in range(len(ray.path) - 1):
@@ -573,14 +608,6 @@ class OpticsSimulator:
                     # 線分と球の交差判定（2D: x, y座標で判定）
                     p1x, p1y = float(p1[0]), float(p1[1])
                     p2x, p2y = float(p2[0]), float(p2[1])
-                    # 光線のZ座標（3D光線の場合）
-                    p1z = float(p1[2]) if len(p1) > 2 else 0.0
-                    p2z = float(p2[2]) if len(p2) > 2 else 0.0
-                    ray_z = (p1z + p2z) / 2  # 光線セグメントの平均Z座標
-
-                    # Z座標が球の範囲内かチェック
-                    if abs(ray_z - ball_cz) > ball_r * 1.5:
-                        continue
 
                     dx = p2x - p1x
                     dy = p2y - p1y
@@ -864,6 +891,16 @@ class OpticsSimulator:
         """球の間隔を設定（mm単位、スライダー用コールバック）"""
         self.ball_spacing_mm = round(value, 1)
         self._rebuild_balls()
+
+    def _set_light_count(self, value: int):
+        """光源の個数を設定（スライダー用コールバック）"""
+        self.light_count = value
+        self.update_simulation()
+
+    def _set_light_spacing_mm(self, value: float):
+        """光源の間隔を設定（mm単位、スライダー用コールバック）"""
+        self.light_spacing_mm = round(value, 1)
+        self.update_simulation()
 
     def _rebuild_balls(self):
         """球を再構築（個数に応じてZ方向に配置）"""
@@ -1161,23 +1198,29 @@ class OpticsSimulator:
         # 上面図: Y=0が上、Y=view_heightが下
         top_light_y = int(self.light_position[1] * zoom)
 
-        # ハロゲンは横長の矩形として描画
+        # 複数光源を描画（Z方向に配置）
+        light_z_spacing = self.light_spacing_mm * self.mm_to_pixel * zoom
         halogen_width = 60 * zoom  # X方向の幅（横に長い）
-        halogen_depth = 30 * zoom  # Y方向の奥行き
-        halogen_rect = pygame.Rect(
-            int(top_light_x - halogen_width // 2),
-            int(top_light_y - halogen_depth // 2),
-            int(halogen_width),
-            int(halogen_depth)
-        )
-        pygame.draw.rect(view_surface, (255, 255, 200), halogen_rect)
-        pygame.draw.rect(view_surface, (200, 200, 0), halogen_rect, int(3 * zoom))
+        halogen_depth = 20 * zoom  # Y方向の奥行き
 
-        # 球を描画（横図のY座標を上面図のY座標に変換）
+        for i in range(self.light_count):
+            # 上面図ではZ方向がX方向に対応（-Z方向が右側）
+            light_offset_x = i * light_z_spacing
+            halogen_rect = pygame.Rect(
+                int(top_light_x - halogen_width // 2 + light_offset_x),
+                int(top_light_y - halogen_depth // 2),
+                int(halogen_width),
+                int(halogen_depth)
+            )
+            pygame.draw.rect(view_surface, (255, 255, 200), halogen_rect)
+            pygame.draw.rect(view_surface, (200, 200, 0), halogen_rect, max(1, int(2 * zoom)))
+
+        # 球を描画（横図のY座標を上面図のY座標に変換、Z座標でX位置をオフセット）
         for ball in self.engine.balls:
             pos_3d = ball['position']
             radius = ball['radius']
-            top_x = int((self.view_width // 2) * zoom)  # 画面中央（X軸は固定）
+            # Z座標を上面図のX方向にオフセット（-Z方向が右側）
+            top_x = int((self.view_width // 2) * zoom - pos_3d[2] * zoom)
             top_y = int(pos_3d[1] * zoom)  # 3D座標のY座標をそのまま使用
             pygame.draw.circle(view_surface, self.COLOR_BALL, (top_x, top_y), int(radius * zoom))
             pygame.draw.circle(view_surface, (200, 50, 50), (top_x, top_y), int(radius * zoom), max(2, int(2 * zoom)))
@@ -1596,17 +1639,30 @@ class OpticsSimulator:
 
     def update_simulation(self):
         """シミュレーションを更新"""
-        # 光源位置を3Dに変換
-        light_pos_3d = (self.light_position[0], self.light_position[1], 0)
+        # 複数光源からの光線をすべてクリア
+        self.engine.rays.clear()
 
-        # 3D光源を生成
-        self.engine.create_light_source_3d(
-            light_pos_3d,
-            num_rays_radial=20,  # 放射方向の光線数
-            num_rays_circular=12,  # 円周方向の光線数
-            spread_angle=self.light_spread,
-            center_angle=self.light_angle
-        )
+        # 光源の間隔をピクセルに変換
+        light_z_spacing = self.light_spacing_mm * self.mm_to_pixel
+
+        # 各光源から光線を生成
+        for i in range(self.light_count):
+            # Z方向に配置（球と同じく-Z方向）
+            light_z = -i * light_z_spacing
+            light_pos_3d = (self.light_position[0], self.light_position[1], light_z)
+
+            # 3D光源を生成（光線数は光源数に応じて調整）
+            rays_per_source_radial = max(5, 20 // self.light_count)
+            rays_per_source_circular = max(4, 12 // self.light_count)
+
+            self.engine.create_light_source_3d(
+                light_pos_3d,
+                num_rays_radial=rays_per_source_radial,
+                num_rays_circular=rays_per_source_circular,
+                spread_angle=self.light_spread,
+                center_angle=self.light_angle
+            )
+
         # 球の光強度を計算
         self.calculate_ball_intensity()
 
