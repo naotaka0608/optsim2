@@ -520,6 +520,17 @@ class OpticsSimulator:
             x_3d_view = x_3d - self.view_width / 2
             y_3d_view = -(y_3d - self.view_height / 2)
 
+            # 光の角度から、光源の方向を計算
+            # light_angle: 0が下向き、正が時計回り（2D座標系）
+            # 光線が進む方向（2D）: (sin(angle), cos(angle)) - Y正が下向き
+            # OpenGLの方向光源(w=0)では「光源がある方向」を指定
+            # 光が下に進む = 光源は上にある = 3DでY+方向
+            light_dir_x = -math.sin(self.light_angle)  # 光線の進む方向の逆
+            light_dir_y = math.cos(self.light_angle)   # 光線が下に進む→光源は上
+            light_dir_z = -0.2  # 少し奥から
+
+            glLightfv(GL_LIGHT0, GL_POSITION, [light_dir_x, light_dir_y, light_dir_z, 0.0])
+
             # 球の色（自然な色合い）
             self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.85, 0.75, 0.7))
 
