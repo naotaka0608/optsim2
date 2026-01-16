@@ -50,6 +50,9 @@ class Slider:
         elif self.max_val <= 2.0 and self.min_val >= 1.0:
             # 屈折率などの小さい範囲は小数第2位まで
             value_text = f"{self.value:.2f}"
+        elif self.max_val <= 30.0 and self.min_val < 1.0:
+            # mm単位など小数第2位まで必要なもの
+            value_text = f"{self.value:.2f}"
         else:
             value_text = f"{self.value:.1f}"
         value_surf = font.render(value_text, True, (80, 80, 80))
@@ -147,9 +150,9 @@ class OpticsSimulator:
         # シミュレーション状態
         self.running = True
         self.clock = pygame.time.Clock()
-        self.light_position = (self.view_width // 2, 50)
-        self.light_angle = 0.0  # 光の角度（ラジアン、0は下向き）
-        self.light_spread = np.pi / 2  # 光の広がり角度
+        self.light_position = (300, 450)
+        self.light_angle = np.radians(45)  # 光の角度（ラジアン、初期値45°）
+        self.light_spread = np.radians(5)  # 光の広がり角度（初期値5°）
         self.light_intensity = 1.0  # 光の強度（0.0〜2.0）
         self.dragging_light = False
 
@@ -170,9 +173,9 @@ class OpticsSimulator:
         # スライダーの初期化
         self.sliders = []
         slider_x = 20
-        slider_y_start = 120
+        slider_y_start = 115
         slider_width = 180
-        slider_spacing = 50
+        slider_spacing = 55
 
         # 光の角度スライダー
         self.sliders.append(Slider(
@@ -198,7 +201,8 @@ class OpticsSimulator:
             lambda v: self._set_water_level(v)
         ))
 
-        # 屈折率スライダー
+        # 屈折率スライダー（初期値1.47）
+        self.engine.water_refractive_index = 1.47
         self.sliders.append(Slider(
             slider_x, slider_y_start + slider_spacing * 3, slider_width,
             1.00, 2.00, self.engine.water_refractive_index,
@@ -213,6 +217,29 @@ class OpticsSimulator:
             "光の強度",
             lambda v: self._set_light_intensity(v)
         ))
+
+        # 球の個数（初期値2）
+        self.ball_count = 2
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 5, slider_width,
+            1, 30, self.ball_count,
+            "球の個数",
+            lambda v: self._set_ball_count(int(v))
+        ))
+
+        # 球の大きさ（mm単位、内部ではピクセルに変換）
+        # 1mm = 4ピクセル
+        self.ball_radius_mm = 8.73  # デフォルト8.73mm
+        self.mm_to_pixel = 4.0  # 1mm = 4ピクセル
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 6, slider_width,
+            0.1, 30.0, self.ball_radius_mm,
+            "球の半径 (mm)",
+            lambda v: self._set_ball_radius_mm(v)
+        ))
+
+        # 初期状態で球を再構築
+        self._rebuild_balls()
 
         # 3Dビューモード設定
         self.view_mode_3d = False  # False=2Dモード, True=3Dモード
@@ -521,11 +548,12 @@ class OpticsSimulator:
             y_3d_view = -(y_3d - self.view_height / 2)
 
             # 光線が球に当たっているかを判定し、当たった光線の方向と数を記録
+            # 3D空間での判定：光線のZ座標と球のZ座標が近いかどうかも考慮
             ball_hit = False
             hit_ray_dir = None
             hit_count = 0
             total_rays = len(self.engine.rays)
-            ball_cx, ball_cy = ball['position'][0], ball['position'][1]
+            ball_cx, ball_cy, ball_cz = ball['position'][0], ball['position'][1], ball['position'][2]
             ball_r = ball['radius']
             for ray in self.engine.rays:
                 # 光線の経路をチェック
@@ -536,6 +564,15 @@ class OpticsSimulator:
                     # 線分と球の交差判定（2D: x, y座標で判定）
                     p1x, p1y = float(p1[0]), float(p1[1])
                     p2x, p2y = float(p2[0]), float(p2[1])
+                    # 光線のZ座標（3D光線の場合）
+                    p1z = float(p1[2]) if len(p1) > 2 else 0.0
+                    p2z = float(p2[2]) if len(p2) > 2 else 0.0
+                    ray_z = (p1z + p2z) / 2  # 光線セグメントの平均Z座標
+
+                    # Z座標が球の範囲内かチェック
+                    if abs(ray_z - ball_cz) > ball_r * 1.5:
+                        continue
+
                     dx = p2x - p1x
                     dy = p2y - p1y
                     line_len = math.sqrt(dx * dx + dy * dy)
@@ -803,6 +840,37 @@ class OpticsSimulator:
     def _set_light_intensity(self, value: float):
         """光の強度を設定（スライダー用コールバック）"""
         self.light_intensity = round(value, 2)
+
+    def _set_ball_count(self, value: int):
+        """球の個数を設定（スライダー用コールバック）"""
+        self.ball_count = value
+        self._rebuild_balls()
+
+    def _set_ball_radius_mm(self, value: float):
+        """球の半径を設定（mm単位、スライダー用コールバック）"""
+        self.ball_radius_mm = round(value, 2)
+        self._rebuild_balls()
+
+    def _rebuild_balls(self):
+        """球を再構築（個数に応じてZ方向に配置）"""
+        self.engine.balls.clear()
+
+        ball_y = self.view_height * 0.7
+        ball_x = self.view_width // 2
+        # mm単位の半径をピクセルに変換
+        ball_radius = self.ball_radius_mm * self.mm_to_pixel
+
+        # Z方向の間隔（球が重ならないように）
+        z_spacing = ball_radius * 2.5
+
+        # 中心からZ方向に配置
+        for i in range(self.ball_count):
+            # 中心を0として、-Z方向に並べる
+            ball_z = -i * z_spacing
+            self.engine.add_ball((ball_x, ball_y, ball_z), ball_radius)
+
+        # 光線を再計算
+        self.update_simulation()
 
     def calculate_ball_intensity(self):
         """球に当たった光の強度を計算"""
@@ -1167,31 +1235,32 @@ class OpticsSimulator:
         # タイトル
         title = self.title_font.render("パラメータ", True, self.COLOR_TEXT)
         self.screen.blit(title, (15, y))
-        y += 45
+        y += 30
 
         # 光源位置（読み取り専用）
         text = self.small_font.render("光源位置", True, self.COLOR_TEXT)
         self.screen.blit(text, (15, y))
-        y += 18
+        y += 16
         pos_text = self.small_font.render(f"X: {int(self.light_position[0])}, Y: {int(self.light_position[1])}", True, (100, 100, 100))
         self.screen.blit(pos_text, (20, y))
-        y += 30
 
         # スライダーを描画
         for slider in self.sliders:
             slider.draw(self.screen, self.small_font)
 
-        y = 300
+        # スライダーの下に光線数と操作説明を配置
+        # スライダーの最後の位置から計算
+        y = 115 + 55 * len(self.sliders) + 30
 
         # 光線数（読み取り専用）
         text = self.small_font.render(f"光線数: {len(self.engine.rays)} 本", True, (100, 100, 100))
         self.screen.blit(text, (15, y))
-        y += 50
+        y += 30
 
         # 操作説明
         help_title = self.font.render("操作方法", True, self.COLOR_TEXT)
         self.screen.blit(help_title, (15, y))
-        y += 30
+        y += 25
 
         help_texts = [
             "左クリック: 光源移動(2D)",
@@ -1208,7 +1277,7 @@ class OpticsSimulator:
         for text in help_texts:
             surface = self.small_font.render(text, True, (100, 100, 100))
             self.screen.blit(surface, (20, y))
-            y += 22
+            y += 18
 
     def handle_events(self):
         """イベント処理"""
