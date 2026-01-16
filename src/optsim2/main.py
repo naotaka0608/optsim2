@@ -238,6 +238,15 @@ class OpticsSimulator:
             lambda v: self._set_ball_radius_mm(v)
         ))
 
+        # 球の間隔（mm単位）
+        self.ball_spacing_mm = 25.0  # デフォルト25mm
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 7, slider_width,
+            1.0, 100.0, self.ball_spacing_mm,
+            "球の間隔 (mm)",
+            lambda v: self._set_ball_spacing_mm(v)
+        ))
+
         # 初期状態で球を再構築
         self._rebuild_balls()
 
@@ -851,6 +860,11 @@ class OpticsSimulator:
         self.ball_radius_mm = round(value, 2)
         self._rebuild_balls()
 
+    def _set_ball_spacing_mm(self, value: float):
+        """球の間隔を設定（mm単位、スライダー用コールバック）"""
+        self.ball_spacing_mm = round(value, 1)
+        self._rebuild_balls()
+
     def _rebuild_balls(self):
         """球を再構築（個数に応じてZ方向に配置）"""
         self.engine.balls.clear()
@@ -860,8 +874,8 @@ class OpticsSimulator:
         # mm単位の半径をピクセルに変換
         ball_radius = self.ball_radius_mm * self.mm_to_pixel
 
-        # Z方向の間隔（球が重ならないように）
-        z_spacing = ball_radius * 2.5
+        # Z方向の間隔（mm単位をピクセルに変換）
+        z_spacing = self.ball_spacing_mm * self.mm_to_pixel
 
         # 中心からZ方向に配置
         for i in range(self.ball_count):
