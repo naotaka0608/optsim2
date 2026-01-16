@@ -520,16 +520,56 @@ class OpticsSimulator:
             x_3d_view = x_3d - self.view_width / 2
             y_3d_view = -(y_3d - self.view_height / 2)
 
-            # 光の角度から、光源の方向を計算
-            # light_angle: 0が下向き、正が時計回り（2D座標系）
-            # 光線が進む方向（2D）: (sin(angle), cos(angle)) - Y正が下向き
-            # OpenGLの方向光源(w=0)では「光源がある方向」を指定
-            # 光が下に進む = 光源は上にある = 3DでY+方向
-            light_dir_x = -math.sin(self.light_angle)  # 光線の進む方向の逆
-            light_dir_y = math.cos(self.light_angle)   # 光線が下に進む→光源は上
-            light_dir_z = -0.2  # 少し奥から
+            # 光線が球に当たっているかを判定し、当たった光線の方向と数を記録
+            ball_hit = False
+            hit_ray_dir = None
+            hit_count = 0
+            total_rays = len(self.engine.rays)
+            ball_cx, ball_cy = ball['position'][0], ball['position'][1]
+            ball_r = ball['radius']
+            for ray in self.engine.rays:
+                # 光線の経路をチェック
+                ray_hits = False
+                for i in range(len(ray.path) - 1):
+                    p1 = ray.path[i]
+                    p2 = ray.path[i + 1]
+                    # 線分と球の交差判定（2D: x, y座標で判定）
+                    p1x, p1y = float(p1[0]), float(p1[1])
+                    p2x, p2y = float(p2[0]), float(p2[1])
+                    dx = p2x - p1x
+                    dy = p2y - p1y
+                    line_len = math.sqrt(dx * dx + dy * dy)
+                    if line_len < 0.001:
+                        continue
+                    # 球の中心から線分への最短距離を計算
+                    t = max(0, min(1, ((ball_cx - p1x) * dx + (ball_cy - p1y) * dy) / (line_len * line_len)))
+                    closest_x = p1x + t * dx
+                    closest_y = p1y + t * dy
+                    dist = math.sqrt((ball_cx - closest_x) ** 2 + (ball_cy - closest_y) ** 2)
+                    if dist <= ball_r:
+                        ray_hits = True
+                        if not ball_hit:
+                            ball_hit = True
+                            # 最初にヒットした光線の方向を記録（正規化）
+                            hit_ray_dir = (dx / line_len, dy / line_len)
+                        break
+                if ray_hits:
+                    hit_count += 1
 
-            glLightfv(GL_LIGHT0, GL_POSITION, [light_dir_x, light_dir_y, light_dir_z, 0.0])
+            if ball_hit and hit_ray_dir is not None:
+                # 光線の進む方向から光源の方向を計算
+                light_dir_x = hit_ray_dir[0]
+                light_dir_y = hit_ray_dir[1]
+                light_dir_z = 0.2
+                glLightfv(GL_LIGHT0, GL_POSITION, [light_dir_x, light_dir_y, light_dir_z, 0.0])
+
+                # ヒットした光線の割合に応じて照明強度を調整
+                hit_ratio = hit_count / max(1, total_rays)
+                adjusted_intensity = intensity * (0.3 + 0.7 * hit_ratio)  # 最低30%、最大100%
+                glLightfv(GL_LIGHT0, GL_DIFFUSE, [adjusted_intensity, adjusted_intensity, adjusted_intensity * 0.9, 1])
+            else:
+                # 環境光のみ
+                glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.1, 0.1, 0.1, 1])
 
             # 球の色（自然な色合い）
             self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.85, 0.75, 0.7))
@@ -542,6 +582,38 @@ class OpticsSimulator:
         self.draw_line_3d((0, 0, 0), (0, axis_length, 0), (0, 1, 0), 2)
         # Z軸（青）
         self.draw_line_3d((0, 0, 0), (0, 0, axis_length), (0, 0, 1), 2)
+
+        # 球の中心から XYZ軸を表示（ラベル付き）
+        if self.engine.balls:
+            ball = self.engine.balls[0]
+            bx, by, bz = ball['position']
+            # ビュー座標系
+            bx_v = bx - self.view_width / 2
+            by_v = -(by - self.view_height / 2)
+            
+            len_axis = 120
+            # X Axis (Red)
+            self.draw_line_3d((bx_v, by_v, bz), (bx_v + len_axis, by_v, bz), (1, 0, 0), 3)
+            # Draw 'X'
+            tip_x = bx_v + len_axis + 10
+            self.draw_line_3d((tip_x, by_v - 5, bz), (tip_x + 10, by_v + 5, bz), (1, 0, 0), 2)
+            self.draw_line_3d((tip_x + 10, by_v - 5, bz), (tip_x, by_v + 5, bz), (1, 0, 0), 2)
+
+            # Y Axis (Green)
+            self.draw_line_3d((bx_v, by_v, bz), (bx_v, by_v + len_axis, bz), (0, 1, 0), 3)
+            # Draw 'Y'
+            tip_y = by_v + len_axis + 10
+            self.draw_line_3d((bx_v, tip_y, bz), (bx_v - 5, tip_y + 10, bz), (0, 1, 0), 2)
+            self.draw_line_3d((bx_v, tip_y, bz), (bx_v + 5, tip_y + 10, bz), (0, 1, 0), 2)
+            self.draw_line_3d((bx_v, tip_y - 5, bz), (bx_v, tip_y, bz), (0, 1, 0), 2)
+
+            # Z Axis (Blue)
+            self.draw_line_3d((bx_v, by_v, bz), (bx_v, by_v, bz + len_axis), (0, 0, 1), 3)
+            # Draw 'Z'
+            tip_z = bz + len_axis + 10
+            self.draw_line_3d((bx_v - 5, by_v + 5, tip_z), (bx_v + 5, by_v + 5, tip_z), (0, 0, 1), 2)
+            self.draw_line_3d((bx_v + 5, by_v + 5, tip_z), (bx_v - 5, by_v - 5, tip_z), (0, 0, 1), 2)
+            self.draw_line_3d((bx_v - 5, by_v - 5, tip_z), (bx_v + 5, by_v - 5, tip_z), (0, 0, 1), 2)
 
         # 水面を最後に描画（半透明なので）
         self.draw_water_plane_3d()
