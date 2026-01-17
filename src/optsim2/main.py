@@ -273,6 +273,7 @@ class OpticsSimulator:
         self.view_mode_raytracing = False  # レイトレーシング風3D描画モード（未使用）
         self.view_mode_natural_3d = False  # 自然光3Dモード（キー4）
         self.heatmap_mode = False  # ヒートマップ表示モード（キーH）
+        self.show_light_source = True  # 光源表示モード（キーL）
         self.heatmap_cache = {}  # ヒートマップのキャッシュ
         self.heatmap_max_intensity = 1  # ヒートマップの最大強度
         self.raytracing_image = None  # レイトレーシング結果のサーフェス
@@ -504,6 +505,81 @@ class OpticsSimulator:
         glEnd()
         glEnable(GL_LIGHTING)
 
+    def draw_axis_3d(self):
+        """座標軸を画面左下に描画（デザイン性のあるXYZラベル付き）"""
+        glDisable(GL_LIGHTING)
+
+        axis_origin = (-350, -200, -200)
+        axis_length = 80
+
+        # 軸の色（明るめ）
+        x_color = (1.0, 0.3, 0.3)  # 赤
+        y_color = (0.3, 1.0, 0.3)  # 緑
+        z_color = (0.3, 0.6, 1.0)  # 青
+
+        # 原点の小さな球
+        glColor3f(0.8, 0.8, 0.8)
+        glPushMatrix()
+        glTranslatef(*axis_origin)
+        quad = gluNewQuadric()
+        gluSphere(quad, 5, 12, 12)
+        gluDeleteQuadric(quad)
+        glPopMatrix()
+
+        # X軸（赤）- 矢印付き
+        x_end = (axis_origin[0] + axis_length, axis_origin[1], axis_origin[2])
+        self.draw_line_3d(axis_origin, x_end, x_color, 3)
+        # 矢印の先端
+        arrow_size = 8
+        self.draw_line_3d(x_end, (x_end[0] - arrow_size, x_end[1] + arrow_size/2, x_end[2]), x_color, 2)
+        self.draw_line_3d(x_end, (x_end[0] - arrow_size, x_end[1] - arrow_size/2, x_end[2]), x_color, 2)
+
+        # Y軸（緑）- 矢印付き
+        y_end = (axis_origin[0], axis_origin[1] + axis_length, axis_origin[2])
+        self.draw_line_3d(axis_origin, y_end, y_color, 3)
+        # 矢印の先端
+        self.draw_line_3d(y_end, (y_end[0] + arrow_size/2, y_end[1] - arrow_size, y_end[2]), y_color, 2)
+        self.draw_line_3d(y_end, (y_end[0] - arrow_size/2, y_end[1] - arrow_size, y_end[2]), y_color, 2)
+
+        # Z軸（青）- 矢印付き
+        z_end = (axis_origin[0], axis_origin[1], axis_origin[2] + axis_length)
+        self.draw_line_3d(axis_origin, z_end, z_color, 3)
+        # 矢印の先端
+        self.draw_line_3d(z_end, (z_end[0], z_end[1] + arrow_size/2, z_end[2] - arrow_size), z_color, 2)
+        self.draw_line_3d(z_end, (z_end[0], z_end[1] - arrow_size/2, z_end[2] - arrow_size), z_color, 2)
+
+        # XYZラベルを描画（正しい向きで）
+        s = 10  # ラベルのサイズ
+        label_gap = 15
+
+        # X ラベル（X軸の先端に、XZ平面上に描画）
+        tx = axis_origin[0] + axis_length + label_gap
+        ty = axis_origin[1]
+        tz = axis_origin[2]
+        # X の形を描画（斜めの2本線）
+        self.draw_line_3d((tx, ty, tz - s), (tx, ty, tz + s), x_color, 2)
+        self.draw_line_3d((tx + s, ty, tz - s), (tx - s, ty, tz + s), x_color, 2)
+
+        # Y ラベル（Y軸の先端に、XY平面上に描画）
+        tx = axis_origin[0]
+        ty = axis_origin[1] + axis_length + label_gap
+        tz = axis_origin[2]
+        # Y の形を描画
+        self.draw_line_3d((tx - s, ty + s, tz), (tx, ty, tz), y_color, 2)
+        self.draw_line_3d((tx + s, ty + s, tz), (tx, ty, tz), y_color, 2)
+        self.draw_line_3d((tx, ty, tz), (tx, ty - s, tz), y_color, 2)
+
+        # Z ラベル（Z軸の先端に、YZ平面上に描画）
+        tx = axis_origin[0]
+        ty = axis_origin[1]
+        tz = axis_origin[2] + axis_length + label_gap
+        # Z の形を描画
+        self.draw_line_3d((tx, ty + s, tz - s), (tx, ty + s, tz + s), z_color, 2)
+        self.draw_line_3d((tx, ty + s, tz + s), (tx, ty - s, tz - s), z_color, 2)
+        self.draw_line_3d((tx, ty - s, tz - s), (tx, ty - s, tz + s), z_color, 2)
+
+        glEnable(GL_LIGHTING)
+
     def draw_water_plane_3d(self):
         """3D水面を描画（半透明）"""
         # 水面のY座標を計算（2D座標系を3D座標系に変換）
@@ -559,22 +635,23 @@ class OpticsSimulator:
                 self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.7, 0.8, 0.9))
 
         # 光源を描画（複数光源を中央配置）
-        light_x_2d, light_y_2d = self.light_position
-        light_x_3d = light_x_2d - self.view_width / 2
-        light_y_3d = -(light_y_2d - self.view_height / 2)
+        if self.show_light_source:
+            light_x_2d, light_y_2d = self.light_position
+            light_x_3d = light_x_2d - self.view_width / 2
+            light_y_3d = -(light_y_2d - self.view_height / 2)
 
-        # 光源の間隔をピクセルに変換
-        light_z_spacing = self.light_spacing_mm * self.mm_to_pixel
+            # 光源の間隔をピクセルに変換
+            light_z_spacing = self.light_spacing_mm * self.mm_to_pixel
 
-        # 中心配置のオフセット計算
-        total_light_width = (self.light_count - 1) * light_z_spacing
-        start_light_z = total_light_width / 2  # +Z側から開始
+            # 中心配置のオフセット計算
+            total_light_width = (self.light_count - 1) * light_z_spacing
+            start_light_z = total_light_width / 2  # +Z側から開始
 
-        for i in range(self.light_count):
-            # 中心がZ=0になるように配置
-            light_z_3d = start_light_z - i * light_z_spacing
-            # 光源（小さな黄色い球）
-            self.draw_sphere_3d(light_x_3d, light_y_3d, light_z_3d, 10, (1.0, 1.0, 0.3))
+            for i in range(self.light_count):
+                # 中心がZ=0になるように配置
+                light_z_3d = start_light_z - i * light_z_spacing
+                # 光源（小さな黄色い球）
+                self.draw_sphere_3d(light_x_3d, light_y_3d, light_z_3d, 10, (1.0, 1.0, 0.3))
 
         # 光線を描画（3D座標を使用）
         for ray in self.engine.rays:
@@ -599,14 +676,8 @@ class OpticsSimulator:
 
                 self.draw_line_3d(p1_3d, p2_3d, color, 1.5)
 
-        # 座標軸を描画（デバッグ用）
-        axis_length = 100
-        # X軸（赤）
-        self.draw_line_3d((0, 0, 0), (axis_length, 0, 0), (1, 0, 0), 2)
-        # Y軸（緑）
-        self.draw_line_3d((0, 0, 0), (0, axis_length, 0), (0, 1, 0), 2)
-        # Z軸（青）
-        self.draw_line_3d((0, 0, 0), (0, 0, axis_length), (0, 0, 1), 2)
+        # 座標軸を描画（画面左下の隅に配置）
+        self.draw_axis_3d()
 
         # 水面を最後に描画（半透明なので）
         self.draw_water_plane_3d()
@@ -707,13 +778,14 @@ class OpticsSimulator:
         glLightfv(GL_LIGHT0, GL_SPECULAR, [intensity, intensity, intensity * 0.95, 1])
 
         # 複数光源のグロー効果を描画（中央配置）
-        light_z_spacing = self.light_spacing_mm * self.mm_to_pixel
-        total_light_width = (self.light_count - 1) * light_z_spacing
-        start_light_z = total_light_width / 2  # +Z側から開始
+        if self.show_light_source:
+            light_z_spacing = self.light_spacing_mm * self.mm_to_pixel
+            total_light_width = (self.light_count - 1) * light_z_spacing
+            start_light_z = total_light_width / 2  # +Z側から開始
 
-        for i in range(self.light_count):
-            light_z_3d = start_light_z - i * light_z_spacing
-            self.draw_light_glow_3d(light_x_3d, light_y_3d, light_z_3d, self.light_angle, self.light_spread, self.light_intensity)
+            for i in range(self.light_count):
+                light_z_3d = start_light_z - i * light_z_spacing
+                self.draw_light_glow_3d(light_x_3d, light_y_3d, light_z_3d, self.light_angle, self.light_spread, self.light_intensity)
 
         # 最初の光源位置をOpenGLライトとして設定
         glLightfv(GL_LIGHT0, GL_POSITION, [light_x_3d, light_y_3d, 0, 1.0])
@@ -807,46 +879,8 @@ class OpticsSimulator:
             else:
                 self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.85, 0.75, 0.7))
 
-        # 座標軸を描画（デバッグ用）
-        axis_length = 100
-        # X軸（赤）
-        self.draw_line_3d((0, 0, 0), (axis_length, 0, 0), (1, 0, 0), 2)
-        # Y軸（緑）
-        self.draw_line_3d((0, 0, 0), (0, axis_length, 0), (0, 1, 0), 2)
-        # Z軸（青）
-        self.draw_line_3d((0, 0, 0), (0, 0, axis_length), (0, 0, 1), 2)
-
-        # 球の中心から XYZ軸を表示（ラベル付き）
-        if self.engine.balls:
-            ball = self.engine.balls[0]
-            bx, by, bz = ball['position']
-            # ビュー座標系
-            bx_v = bx - self.view_width / 2
-            by_v = -(by - self.view_height / 2)
-            
-            len_axis = 120
-            # X Axis (Red)
-            self.draw_line_3d((bx_v, by_v, bz), (bx_v + len_axis, by_v, bz), (1, 0, 0), 3)
-            # Draw 'X'
-            tip_x = bx_v + len_axis + 10
-            self.draw_line_3d((tip_x, by_v - 5, bz), (tip_x + 10, by_v + 5, bz), (1, 0, 0), 2)
-            self.draw_line_3d((tip_x + 10, by_v - 5, bz), (tip_x, by_v + 5, bz), (1, 0, 0), 2)
-
-            # Y Axis (Green)
-            self.draw_line_3d((bx_v, by_v, bz), (bx_v, by_v + len_axis, bz), (0, 1, 0), 3)
-            # Draw 'Y'
-            tip_y = by_v + len_axis + 10
-            self.draw_line_3d((bx_v, tip_y, bz), (bx_v - 5, tip_y + 10, bz), (0, 1, 0), 2)
-            self.draw_line_3d((bx_v, tip_y, bz), (bx_v + 5, tip_y + 10, bz), (0, 1, 0), 2)
-            self.draw_line_3d((bx_v, tip_y - 5, bz), (bx_v, tip_y, bz), (0, 1, 0), 2)
-
-            # Z Axis (Blue)
-            self.draw_line_3d((bx_v, by_v, bz), (bx_v, by_v, bz + len_axis), (0, 0, 1), 3)
-            # Draw 'Z'
-            tip_z = bz + len_axis + 10
-            self.draw_line_3d((bx_v - 5, by_v + 5, tip_z), (bx_v + 5, by_v + 5, tip_z), (0, 0, 1), 2)
-            self.draw_line_3d((bx_v + 5, by_v + 5, tip_z), (bx_v - 5, by_v - 5, tip_z), (0, 0, 1), 2)
-            self.draw_line_3d((bx_v - 5, by_v - 5, tip_z), (bx_v + 5, by_v - 5, tip_z), (0, 0, 1), 2)
+        # 座標軸を描画（画面左下の隅に配置）
+        self.draw_axis_3d()
 
         # 水面を最後に描画（半透明なので）
         self.draw_water_plane_3d()
@@ -1569,6 +1603,7 @@ class OpticsSimulator:
             "↑↓: 水面",
             "2/3キー: 2D/3D切替",
             "H: ヒートマップ(3D)",
+            "L: 光源表示(3D)",
             "R: リセット",
         ]
 
@@ -1676,6 +1711,11 @@ class OpticsSimulator:
                     # ヒートマップモードの切り替え（3Dモード時のみ有効）
                     if self.view_mode_3d or self.view_mode_natural_3d:
                         self.heatmap_mode = not self.heatmap_mode
+
+                elif event.key == pygame.K_l:
+                    # 光源表示の切り替え（3Dモード時のみ有効）
+                    if self.view_mode_3d or self.view_mode_natural_3d:
+                        self.show_light_source = not self.show_light_source
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左クリック
