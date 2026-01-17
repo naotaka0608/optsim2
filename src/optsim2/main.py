@@ -59,7 +59,7 @@ class TabGroup:
 
 
 class Slider:
-    """スライダーUIコンポーネント"""
+    """スライダーUIコンポーネント（テキスト入力対応）"""
     def __init__(self, x: int, y: int, width: int, min_val: float, max_val: float,
                  initial_val: float, label: str, callback: Callable[[float], None],
                  tab_index: int = 0):
@@ -72,6 +72,15 @@ class Slider:
         self.dragging = False
         self.knob_radius = 8
         self.tab_index = tab_index  # どのタブに属するか
+        
+        # テキスト入力用の状態
+        self.input_active = False  # テキスト入力モードかどうか
+        self.input_text = ""  # 入力中のテキスト
+        self.input_box_width = 50
+        self.input_box_height = 20
+        self.cursor_visible = True  # カーソル点滅用
+        self.cursor_timer = 0  # カーソル点滅タイマー
+        self.cursor_pos = 0  # カーソル位置（文字インデックス）
 
     def draw(self, surface: pygame.Surface, font: pygame.font.Font):
         # ラベル
@@ -90,21 +99,145 @@ class Slider:
         pygame.draw.circle(surface, (70, 130, 220), (knob_x, knob_y), self.knob_radius)
         pygame.draw.circle(surface, (50, 100, 180), (knob_x, knob_y), self.knob_radius, 2)
 
-        # 値の表示
-        if isinstance(self.value, int):
-            value_text = str(self.value)
-        elif self.max_val <= 2.0 and self.min_val >= 1.0:
-            # 屈折率などの小さい範囲は小数第2位まで
-            value_text = f"{self.value:.2f}"
-        elif self.max_val <= 30.0 and self.min_val < 1.0:
-            # mm単位など小数第2位まで必要なもの
-            value_text = f"{self.value:.2f}"
+        # テキスト入力ボックスの位置を計算
+        input_x = self.rect.x + self.rect.width + 10
+        input_y = self.rect.y
+        input_rect = pygame.Rect(input_x, input_y, self.input_box_width, self.input_box_height)
+        
+        # テキスト入力ボックス
+        if self.input_active:
+            # アクティブ時は青枠
+            pygame.draw.rect(surface, (255, 255, 255), input_rect)
+            pygame.draw.rect(surface, (70, 130, 220), input_rect, 2)
+            # 入力中のテキストを表示
+            text_surf = font.render(self.input_text, True, (50, 50, 50))
+            surface.blit(text_surf, (input_rect.x + 4, input_rect.y + 2))
+            
+            # カーソル点滅
+            self.cursor_timer += 1
+            if self.cursor_timer >= 30:
+                self.cursor_timer = 0
+                self.cursor_visible = not self.cursor_visible
+            if self.cursor_visible:
+                # カーソル位置までのテキスト幅を計算
+                text_before_cursor = self.input_text[:self.cursor_pos]
+                cursor_x = input_rect.x + 4 + font.size(text_before_cursor)[0]
+                pygame.draw.line(surface, (50, 50, 50), 
+                               (cursor_x, input_rect.y + 3), 
+                               (cursor_x, input_rect.y + 17), 1)
         else:
-            value_text = f"{self.value:.1f}"
-        value_surf = font.render(value_text, True, (80, 80, 80))
-        surface.blit(value_surf, (self.rect.x + self.rect.width + 10, self.rect.y))
+            # 非アクティブ時は値を表示
+            pygame.draw.rect(surface, (245, 245, 250), input_rect)
+            pygame.draw.rect(surface, (180, 180, 180), input_rect, 1)
+            # 値のフォーマット
+            if isinstance(self.value, int):
+                value_text = str(self.value)
+            elif self.max_val <= 2.0 and self.min_val >= 1.0:
+                value_text = f"{self.value:.2f}"
+            elif self.max_val <= 30.0 and self.min_val < 1.0:
+                value_text = f"{self.value:.2f}"
+            else:
+                value_text = f"{self.value:.1f}"
+            value_surf = font.render(value_text, True, (80, 80, 80))
+            surface.blit(value_surf, (input_rect.x + 4, input_rect.y + 2))
+        
+        # 入力ボックスのrectを保存（イベント処理用）
+        self.input_rect = input_rect
 
     def handle_event(self, event: pygame.event.Event) -> bool:
+        # テキスト入力モードの処理
+        if self.input_active:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
+                    # 入力を確定
+                    if self.input_text.strip():  # 空でない場合のみ
+                        try:
+                            new_value = float(self.input_text)
+                            # 範囲内にクランプ
+                            new_value = max(self.min_val, min(self.max_val, new_value))
+                            if isinstance(self.min_val, int) and isinstance(self.max_val, int):
+                                new_value = int(new_value)
+                            self.value = new_value
+                            self.callback(self.value)
+                        except ValueError:
+                            pass  # 無効な入力は無視（元の値を保持）
+                    self.input_active = False
+                    self.input_text = ""
+                    self.cursor_pos = 0
+                    return True
+                elif event.key == pygame.K_ESCAPE:
+                    # キャンセル
+                    self.input_active = False
+                    self.input_text = ""
+                    self.cursor_pos = 0
+                    return True
+                elif event.key == pygame.K_BACKSPACE:
+                    # カーソル位置の前の文字を削除
+                    if self.cursor_pos > 0:
+                        self.input_text = self.input_text[:self.cursor_pos-1] + self.input_text[self.cursor_pos:]
+                        self.cursor_pos -= 1
+                    return True
+                elif event.key == pygame.K_DELETE:
+                    # カーソル位置の文字を削除
+                    if self.cursor_pos < len(self.input_text):
+                        self.input_text = self.input_text[:self.cursor_pos] + self.input_text[self.cursor_pos+1:]
+                    return True
+                elif event.key == pygame.K_LEFT:
+                    # カーソルを左に移動
+                    if self.cursor_pos > 0:
+                        self.cursor_pos -= 1
+                    return True
+                elif event.key == pygame.K_RIGHT:
+                    # カーソルを右に移動
+                    if self.cursor_pos < len(self.input_text):
+                        self.cursor_pos += 1
+                    return True
+                elif event.key == pygame.K_HOME:
+                    # カーソルを先頭に移動
+                    self.cursor_pos = 0
+                    return True
+                elif event.key == pygame.K_END:
+                    # カーソルを末尾に移動
+                    self.cursor_pos = len(self.input_text)
+                    return True
+                else:
+                    # 数字、小数点、マイナス記号のみ受け付け
+                    if event.unicode in '0123456789.-':
+                        # カーソル位置に文字を挿入
+                        self.input_text = self.input_text[:self.cursor_pos] + event.unicode + self.input_text[self.cursor_pos:]
+                        self.cursor_pos += 1
+                        return True
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                # 入力ボックス外をクリックしたら確定
+                if not self.input_rect.collidepoint(event.pos):
+                    if self.input_text.strip():  # 空でない場合のみ
+                        try:
+                            new_value = float(self.input_text)
+                            new_value = max(self.min_val, min(self.max_val, new_value))
+                            if isinstance(self.min_val, int) and isinstance(self.max_val, int):
+                                new_value = int(new_value)
+                            self.value = new_value
+                            self.callback(self.value)
+                        except ValueError:
+                            pass  # 無効な入力は無視（元の値を保持）
+                    self.input_active = False
+                    self.input_text = ""
+                    self.cursor_pos = 0
+            return False
+        
+        # 入力ボックスのクリック判定
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.input_rect.collidepoint(event.pos):
+                self.input_active = True
+                # 現在の値をテキストとして初期化
+                if isinstance(self.value, int):
+                    self.input_text = str(self.value)
+                else:
+                    self.input_text = f"{self.value:.2f}"
+                self.cursor_pos = len(self.input_text)  # カーソルを末尾に
+                return True
+        
+        # スライダーのドラッグ処理
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mouse_pos = event.pos
             knob_pos = self._get_knob_pos()
@@ -131,6 +264,7 @@ class Slider:
         knob_x = int(self.rect.x + ratio * self.rect.width)
         knob_y = self.rect.y + self.rect.height // 2
         return (knob_x, knob_y)
+
 
 
 class OpticsSimulator:
@@ -223,7 +357,7 @@ class OpticsSimulator:
         self.sliders = []
         slider_x = 20
         slider_y_start = 95  # タブの下から開始
-        slider_width = 180
+        slider_width = 120  # テキストボックス分の余白を確保
         slider_spacing = 55
 
         # === タブ0: 光源設定 ===
