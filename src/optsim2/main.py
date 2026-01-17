@@ -392,6 +392,12 @@ class OpticsSimulator:
             {'label': 'Bottom', 'angle': [-90.0, 0.0]},   # XZ Plane (-Y)
         ]
 
+        # 90度回転ボタン定義
+        self.rotation_buttons = [
+            {'label': 'Rot R', 'delta': 90.0},
+            {'label': 'Rot L', 'delta': -90.0},
+        ]
+
     def setup_default_scene(self):
         """デフォルトのシーンを設定"""
         # 水面の位置を設定
@@ -417,8 +423,9 @@ class OpticsSimulator:
         mouse_pos = pygame.mouse.get_pos()
         
         # オーバーレイ用のSurfaceを作成
+        # 4行分確保 (Orientation 3行 + Rotation 1行)
         w = btn_width * 2 + spacing_x + 20
-        h = btn_height * 3 + spacing_y * 2 + 20
+        h = btn_height * 4 + spacing_y * 3 + 20
         overlay_surf = pygame.Surface((w, h), pygame.SRCALPHA)
         # overlay_surf.fill((0, 0, 0, 100)) # 背景なし、ボタンのみ描画
 
@@ -452,6 +459,34 @@ class OpticsSimulator:
             pygame.draw.rect(overlay_surf, (200, 200, 200), rect, 1)
             
             # テキスト
+            text = self.small_font.render(btn['label'], True, (255, 255, 255))
+            text_rect = text.get_rect(center=rect.center)
+            overlay_surf.blit(text, text_rect)
+
+        # 回転ボタン描画
+        panel_x = self.width - (btn_width * 2 + spacing_x) - 20
+        panel_y = 60
+        rotation_start_row = 3
+        
+        for i, btn in enumerate(self.rotation_buttons):
+            row = rotation_start_row
+            col = i % 2
+            
+            # Surface内の相対座標
+            bx = 10 + col * (btn_width + spacing_x)
+            by = 10 + row * (btn_height + spacing_y)
+            
+            rect = pygame.Rect(bx, by, btn_width, btn_height)
+            screen_rect = pygame.Rect(panel_x + bx, panel_y + by, btn_width, btn_height)
+            
+            # ホバー判定
+            color = (80, 80, 90, 200)
+            if screen_rect.collidepoint(mouse_pos):
+                color = (120, 120, 130, 230)
+            
+            pygame.draw.rect(overlay_surf, color, rect)
+            pygame.draw.rect(overlay_surf, (200, 200, 200), rect, 1)
+            
             text = self.small_font.render(btn['label'], True, (255, 255, 255))
             text_rect = text.get_rect(center=rect.center)
             overlay_surf.blit(text, text_rect)
@@ -1996,7 +2031,24 @@ class OpticsSimulator:
                                 target_angle = btn['angle']
                                 self.camera_rotation = list(target_angle) # コピー
                                 clicked_btn = True
+                                self.camera_rotation = list(target_angle) # コピー
+                                clicked_btn = True
                                 break
+                        
+                        # 回転ボタン判定
+                        if not clicked_btn:
+                            rotation_start_row = 3
+                            for i, btn in enumerate(self.rotation_buttons):
+                                row = rotation_start_row
+                                col = i % 2
+                                x = start_x + col * (btn_width + spacing_x)
+                                y = start_y + row * (btn_height + spacing_y)
+                                rect = pygame.Rect(x, y, btn_width, btn_height)
+                                
+                                if rect.collidepoint(mouse_pos):
+                                    self.camera_rotation[1] += btn['delta']
+                                    clicked_btn = True
+                                    break
                         
                         if not clicked_btn:
                             # ボタン以外なら何もしない（誤操作防止）
