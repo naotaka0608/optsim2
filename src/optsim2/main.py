@@ -402,6 +402,7 @@ class OpticsSimulator:
         self.profile_mode = False  # プロファイル表示モード
         self.profile_scan_axis = 'Y'  # 'X' or 'Y'
         self.profile_pos = 0  # スキャン位置
+        self.dragging_profile_line = False  # プロファイルラインのドラッグ中フラグ
 
     def setup_default_scene(self):
         """デフォルトのシーンを設定"""
@@ -2141,13 +2142,25 @@ class OpticsSimulator:
                                     # Toggle Axis
                                     if self.profile_scan_axis == 'Y':
                                         self.profile_scan_axis = 'X'
+                                        self.profile_pos = self.height // 2  # 画面中央にリセット
                                     else:
                                         self.profile_scan_axis = 'Y'
+                                        self.profile_pos = self.width // 2  # 画面中央にリセット
                                     clicked_btn = True
                         
-                        if not clicked_btn:
-                            # ボタン以外なら何もしない（誤操作防止）
-                            pass
+                        # プロファイルラインのドラッグ判定
+                        if not clicked_btn and self.profile_mode:
+                            sensitivity = 15  # クリック判定の許容範囲（ピクセル）
+                            if self.profile_scan_axis == 'Y':
+                                # 縦ライン (X座標で判定)
+                                if abs(mouse_pos[0] - self.profile_pos) < sensitivity:
+                                    self.dragging_profile_line = True
+                                    clicked_btn = True
+                            else:
+                                # 横ライン (Y座標で判定)
+                                if abs(mouse_pos[1] - self.profile_pos) < sensitivity:
+                                    self.dragging_profile_line = True
+                                    clicked_btn = True
 
                     # 2Dモード時のみ光源ドラッグ
                     if not self.view_mode_3d and not self.view_mode_natural_3d:
@@ -2251,6 +2264,7 @@ class OpticsSimulator:
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 1:
                     self.dragging_light = False
+                    self.dragging_profile_line = False  # プロファイルラインのドラッグ終了
                 elif event.button == 2:  # マウスホイールクリック（中クリック）
                     self.dragging_side_view = False
                     self.dragging_top_view = False
@@ -2301,6 +2315,15 @@ class OpticsSimulator:
                     self.camera_target[2] -= (right_z * dx) * move_speed
 
                     self.camera_pan_start = mouse_pos
+                elif self.dragging_profile_line:
+                    # プロファイルラインのドラッグ中
+                    mouse_pos = pygame.mouse.get_pos()
+                    if self.profile_scan_axis == 'Y':
+                        # 縦ライン (X座標を更新)
+                        self.profile_pos = max(0, min(self.width - 1, mouse_pos[0]))
+                    else:
+                        # 横ライン (Y座標を更新)
+                        self.profile_pos = max(0, min(self.height - 1, mouse_pos[1]))
                 elif self.dragging_light:
                     mouse_pos = pygame.mouse.get_pos()
                     side_view_x = self.ui_panel_width + self.view_margin
@@ -2455,14 +2478,12 @@ class OpticsSimulator:
         # glReadPixelsは左下原点。Pygameは左上。
         # ここではPygame座標系(左上原点)で統一して考える。
         
-        # スキャン位置の更新（マウスが画面内にある場合）
-        if 0 <= mouse_pos[0] < self.width and 0 <= mouse_pos[1] < self.height:
-            if self.profile_scan_axis == 'Y': # 垂直ライン（画面上のY軸に沿った分布 = 特定のX座標における縦のライン？）
-                # ユーザーの要望「Z方向の軸の輝度」-> Top View(XZ)では画面の縦方向がZ。
-                # この場合、「X座標を固定して、縦にスキャン」したい。
-                self.profile_pos = mouse_pos[0] # 固定するX座標
+        # スキャン位置の初期化（まだ設定されていない場合のみ）
+        if self.profile_pos == 0:
+            if self.profile_scan_axis == 'Y':
+                self.profile_pos = self.width // 2
             else:
-                self.profile_pos = mouse_pos[1] # 固定するY座標
+                self.profile_pos = self.height // 2
         
         # 画面キャプチャ
         # glReadPixels(x, y, width, height, format, type)
