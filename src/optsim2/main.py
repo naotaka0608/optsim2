@@ -227,10 +227,10 @@ class OpticsSimulator:
         slider_spacing = 55
 
         # === タブ0: 光源設定 ===
-        # 光の角度スライダー
+        # 光の角度スライダー（小数第1位まで）
         self.sliders.append(Slider(
             slider_x, slider_y_start, slider_width,
-            -90, 90, int(np.degrees(self.light_angle)),
+            -90.0, 90.0, round(np.degrees(self.light_angle), 1),
             "光の角度 (°)",
             lambda v: self._set_light_angle(v),
             tab_index=0
@@ -304,6 +304,17 @@ class OpticsSimulator:
             1.0, 100.0, self.ball_spacing_mm,
             "球の間隔 (mm)",
             lambda v: self._set_ball_spacing_mm(v),
+            tab_index=1
+        ))
+
+        # 球の回転速度（rpm、Z軸中心）
+        self.ball_rotation_rpm = 0.0  # 初期値は回転なし
+        self.ball_rotation_angle = 0.0  # 現在の回転角度（ラジアン）
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 3, slider_width,
+            0.0, 500.0, self.ball_rotation_rpm,
+            "回転速度 (rpm)",
+            lambda v: self._set_ball_rotation_rpm(v),
             tab_index=1
         ))
 
@@ -436,10 +447,13 @@ class OpticsSimulator:
                   self.camera_target[2],                     # 注視点
                   0, 1, 0)                                   # 上方向
 
-    def draw_sphere_3d(self, x, y, z, radius, color):
-        """3D球体を描画"""
+    def draw_sphere_3d(self, x, y, z, radius, color, rotation_angle=0.0):
+        """3D球体を描画（Z軸中心の回転対応）"""
         glPushMatrix()
         glTranslatef(x, y, z)
+        # Z軸中心で回転（度単位に変換）
+        if rotation_angle != 0.0:
+            glRotatef(math.degrees(rotation_angle), 0, 0, 1)
         glColor3f(*color)
 
         # GLUクアドリックで球体を描画
@@ -765,7 +779,7 @@ class OpticsSimulator:
             if self.heatmap_mode:
                 self.draw_sphere_heatmap_3d(ball_idx, ball['position'], ball['radius'], x_3d_view, y_3d_view, z_3d)
             else:
-                self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.7, 0.8, 0.9))
+                self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.7, 0.8, 0.9), self.ball_rotation_angle)
 
         # 光源を描画（複数光源を中央配置）
         if self.show_light_source:
@@ -1010,7 +1024,7 @@ class OpticsSimulator:
             if self.heatmap_mode:
                 self.draw_sphere_heatmap_3d(ball_idx, ball['position'], ball['radius'], x_3d_view, y_3d_view, z_3d)
             else:
-                self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.85, 0.75, 0.7))
+                self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.85, 0.75, 0.7), self.ball_rotation_angle)
 
         # 座標軸を描画（画面左下の隅に配置）
         self.draw_axis_3d()
@@ -1233,6 +1247,10 @@ class OpticsSimulator:
         """水面ゆらぎ強度を設定（スライダー用コールバック）"""
         self.engine.water_ripple_strength = round(value, 2)
         self.update_simulation()
+
+    def _set_ball_rotation_rpm(self, value: float):
+        """球の回転速度を設定（rpm単位、スライダー用コールバック）"""
+        self.ball_rotation_rpm = round(value, 1)
 
     def _rebuild_balls(self):
         """球を再構築（個数に応じてZ方向に配置）"""
@@ -1816,14 +1834,14 @@ class OpticsSimulator:
                     self.slider_map['water_level'].value = int(self.engine.water_level)
                     self.update_simulation()
                 elif event.key == pygame.K_LEFT:
-                    # 光の角度を左に
-                    self.light_angle -= np.pi / 180  # 1度ずつ
-                    self.slider_map['light_angle'].value = int(np.degrees(self.light_angle))
+                    # 光の角度を左に（0.1度ずつ）
+                    self.light_angle -= np.pi / 1800  # 0.1度ずつ
+                    self.slider_map['light_angle'].value = round(np.degrees(self.light_angle), 1)
                     self.update_simulation()
                 elif event.key == pygame.K_RIGHT:
-                    # 光の角度を右に
-                    self.light_angle += np.pi / 180  # 1度ずつ
-                    self.slider_map['light_angle'].value = int(np.degrees(self.light_angle))
+                    # 光の角度を右に（0.1度ずつ）
+                    self.light_angle += np.pi / 1800  # 0.1度ずつ
+                    self.slider_map['light_angle'].value = round(np.degrees(self.light_angle), 1)
                     self.update_simulation()
                 elif event.key == pygame.K_q:
                     # 光の広がりを狭く
@@ -2234,6 +2252,15 @@ class OpticsSimulator:
             # 水面ゆらぎのアニメーション更新
             if self.engine.water_ripple_strength > 0:
                 self.engine.water_ripple_time += 0.05
+
+            # 球の回転アニメーション更新（rpm to radians per frame at 60fps）
+            if self.ball_rotation_rpm > 0:
+                # 1rpm = 2π rad/min = 2π/60 rad/sec = 2π/3600 rad/frame (at 60fps)
+                radians_per_frame = (2 * math.pi * self.ball_rotation_rpm) / (60 * 60)
+                self.ball_rotation_angle += radians_per_frame
+                # 2πを超えたらリセット
+                if self.ball_rotation_angle > 2 * math.pi:
+                    self.ball_rotation_angle -= 2 * math.pi
 
             # 描画
             if self.view_mode_3d:
