@@ -14,10 +14,55 @@ from .optics_engine import OpticsEngine, Ray
 import math
 
 
+class TabGroup:
+    """タブUIコンポーネント"""
+    def __init__(self, x: int, y: int, width: int, tabs: List[str]):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.tabs = tabs
+        self.active_tab = 0
+        self.tab_height = 28
+        self.tab_width = width // len(tabs)
+
+    def draw(self, surface: pygame.Surface, font: pygame.font.Font):
+        for i, tab_name in enumerate(self.tabs):
+            tab_x = self.x + i * self.tab_width
+            tab_rect = pygame.Rect(tab_x, self.y, self.tab_width, self.tab_height)
+
+            # アクティブタブは明るく、非アクティブは暗く
+            if i == self.active_tab:
+                pygame.draw.rect(surface, (240, 240, 245), tab_rect)
+                pygame.draw.rect(surface, (70, 130, 220), tab_rect, 2)
+                text_color = (50, 50, 50)
+            else:
+                pygame.draw.rect(surface, (200, 200, 210), tab_rect)
+                pygame.draw.rect(surface, (150, 150, 160), tab_rect, 1)
+                text_color = (100, 100, 100)
+
+            # タブ名
+            text_surf = font.render(tab_name, True, text_color)
+            text_x = tab_x + (self.tab_width - text_surf.get_width()) // 2
+            text_y = self.y + (self.tab_height - text_surf.get_height()) // 2
+            surface.blit(text_surf, (text_x, text_y))
+
+    def handle_event(self, event: pygame.event.Event) -> bool:
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mouse_pos = event.pos
+            for i in range(len(self.tabs)):
+                tab_x = self.x + i * self.tab_width
+                tab_rect = pygame.Rect(tab_x, self.y, self.tab_width, self.tab_height)
+                if tab_rect.collidepoint(mouse_pos):
+                    self.active_tab = i
+                    return True
+        return False
+
+
 class Slider:
     """スライダーUIコンポーネント"""
     def __init__(self, x: int, y: int, width: int, min_val: float, max_val: float,
-                 initial_val: float, label: str, callback: Callable[[float], None]):
+                 initial_val: float, label: str, callback: Callable[[float], None],
+                 tab_index: int = 0):
         self.rect = pygame.Rect(x, y, width, 20)
         self.min_val = min_val
         self.max_val = max_val
@@ -26,6 +71,7 @@ class Slider:
         self.callback = callback
         self.dragging = False
         self.knob_radius = 8
+        self.tab_index = tab_index  # どのタブに属するか
 
     def draw(self, surface: pygame.Surface, font: pygame.font.Font):
         # ラベル
@@ -170,19 +216,24 @@ class OpticsSimulator:
         self.dragging_top_view = False
         self.drag_start_pos = None
 
+        # タブグループの初期化（光源、球、環境の3タブ）
+        self.tab_group = TabGroup(10, 50, self.ui_panel_width - 20, ["光源", "球", "環境"])
+
         # スライダーの初期化
         self.sliders = []
         slider_x = 20
-        slider_y_start = 115
+        slider_y_start = 95  # タブの下から開始
         slider_width = 180
         slider_spacing = 55
 
+        # === タブ0: 光源設定 ===
         # 光の角度スライダー
         self.sliders.append(Slider(
             slider_x, slider_y_start, slider_width,
             -90, 90, int(np.degrees(self.light_angle)),
             "光の角度 (°)",
-            lambda v: self._set_light_angle(v)
+            lambda v: self._set_light_angle(v),
+            tab_index=0
         ))
 
         # 光の広がりスライダー
@@ -190,41 +241,48 @@ class OpticsSimulator:
             slider_x, slider_y_start + slider_spacing, slider_width,
             0, 180, int(np.degrees(self.light_spread)),
             "光の広がり (°)",
-            lambda v: self._set_light_spread(v)
-        ))
-
-        # 水面位置スライダー
-        self.sliders.append(Slider(
-            slider_x, slider_y_start + slider_spacing * 2, slider_width,
-            50, self.view_height - 50, int(self.engine.water_level),
-            "水面位置 (px)",
-            lambda v: self._set_water_level(v)
-        ))
-
-        # 屈折率スライダー（初期値1.47）
-        self.engine.water_refractive_index = 1.47
-        self.sliders.append(Slider(
-            slider_x, slider_y_start + slider_spacing * 3, slider_width,
-            1.00, 2.00, self.engine.water_refractive_index,
-            "屈折率",
-            lambda v: self._set_refractive_index(v)
+            lambda v: self._set_light_spread(v),
+            tab_index=0
         ))
 
         # 光の強度スライダー
         self.sliders.append(Slider(
-            slider_x, slider_y_start + slider_spacing * 4, slider_width,
+            slider_x, slider_y_start + slider_spacing * 2, slider_width,
             0.0, 2.0, self.light_intensity,
             "光の強度",
-            lambda v: self._set_light_intensity(v)
+            lambda v: self._set_light_intensity(v),
+            tab_index=0
         ))
 
+        # 光源の個数
+        self.light_count = 15
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 3, slider_width,
+            1, 30, self.light_count,
+            "光源の個数",
+            lambda v: self._set_light_count(int(v)),
+            tab_index=0
+        ))
+
+        # 光源の間隔（mm単位）
+        self.light_spacing_mm = 3.0  # デフォルト3mm
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 4, slider_width,
+            1.0, 100.0, self.light_spacing_mm,
+            "光源の間隔 (mm)",
+            lambda v: self._set_light_spacing_mm(v),
+            tab_index=0
+        ))
+
+        # === タブ1: 球設定 ===
         # 球の個数（初期値2）
         self.ball_count = 2
         self.sliders.append(Slider(
-            slider_x, slider_y_start + slider_spacing * 5, slider_width,
+            slider_x, slider_y_start, slider_width,
             1, 30, self.ball_count,
             "球の個数",
-            lambda v: self._set_ball_count(int(v))
+            lambda v: self._set_ball_count(int(v)),
+            tab_index=1
         ))
 
         # 球の大きさ（mm単位、内部ではピクセルに変換）
@@ -232,38 +290,56 @@ class OpticsSimulator:
         self.ball_radius_mm = 8.73  # デフォルト8.73mm
         self.mm_to_pixel = 4.0  # 1mm = 4ピクセル
         self.sliders.append(Slider(
-            slider_x, slider_y_start + slider_spacing * 6, slider_width,
+            slider_x, slider_y_start + slider_spacing, slider_width,
             0.1, 30.0, self.ball_radius_mm,
             "球の半径 (mm)",
-            lambda v: self._set_ball_radius_mm(v)
+            lambda v: self._set_ball_radius_mm(v),
+            tab_index=1
         ))
 
         # 球の間隔（mm単位）
         self.ball_spacing_mm = 25.0  # デフォルト25mm
         self.sliders.append(Slider(
-            slider_x, slider_y_start + slider_spacing * 7, slider_width,
+            slider_x, slider_y_start + slider_spacing * 2, slider_width,
             1.0, 100.0, self.ball_spacing_mm,
             "球の間隔 (mm)",
-            lambda v: self._set_ball_spacing_mm(v)
+            lambda v: self._set_ball_spacing_mm(v),
+            tab_index=1
         ))
 
-        # 光源の個数
-        self.light_count = 15
+        # === タブ2: 環境設定 ===
+        # 水面位置スライダー
         self.sliders.append(Slider(
-            slider_x, slider_y_start + slider_spacing * 8, slider_width,
-            1, 30, self.light_count,
-            "光源の個数",
-            lambda v: self._set_light_count(int(v))
+            slider_x, slider_y_start, slider_width,
+            50, self.view_height - 50, int(self.engine.water_level),
+            "水面位置 (px)",
+            lambda v: self._set_water_level(v),
+            tab_index=2
         ))
 
-        # 光源の間隔（mm単位）
-        self.light_spacing_mm = 3.0  # デフォルト3mm
+        # 屈折率スライダー（初期値1.47）
+        self.engine.water_refractive_index = 1.47
         self.sliders.append(Slider(
-            slider_x, slider_y_start + slider_spacing * 9, slider_width,
-            1.0, 100.0, self.light_spacing_mm,
-            "光源の間隔 (mm)",
-            lambda v: self._set_light_spacing_mm(v)
+            slider_x, slider_y_start + slider_spacing, slider_width,
+            1.00, 2.00, self.engine.water_refractive_index,
+            "屈折率",
+            lambda v: self._set_refractive_index(v),
+            tab_index=2
         ))
+
+        # スライダーを名前で参照するための辞書
+        self.slider_map = {
+            'light_angle': self.sliders[0],
+            'light_spread': self.sliders[1],
+            'light_intensity': self.sliders[2],
+            'light_count': self.sliders[3],
+            'light_spacing': self.sliders[4],
+            'ball_count': self.sliders[5],
+            'ball_radius': self.sliders[6],
+            'ball_spacing': self.sliders[7],
+            'water_level': self.sliders[8],
+            'refractive_index': self.sliders[9],
+        }
 
         # 初期状態で球を再構築
         self._rebuild_balls()
@@ -1554,44 +1630,64 @@ class OpticsSimulator:
         title = self.title_font.render("上面図（真上から）", True, self.COLOR_TEXT)
         self.screen.blit(title, (offset_x, 20))
 
-    def draw_ui(self):
-        """UI要素を描画"""
-        # UIパネルの背景
-        panel_rect = pygame.Rect(0, 0, self.ui_panel_width, self.height)
-        pygame.draw.rect(self.screen, (240, 240, 245), panel_rect)
-        pygame.draw.line(self.screen, (180, 180, 180), (self.ui_panel_width, 0), (self.ui_panel_width, self.height), 2)
+    def draw_sidebar(self, surface: pygame.Surface = None, offset_x: int = 0, offset_y: int = 0):
+        """サイドバーUIを描画（2Dモード用・3Dオーバーレイ用共通）"""
+        if surface is None:
+            surface = self.screen
 
-        y = 20
+        # UIパネルの背景
+        panel_rect = pygame.Rect(offset_x, offset_y, self.ui_panel_width, self.height)
+        pygame.draw.rect(surface, (240, 240, 245), panel_rect)
+        pygame.draw.line(surface, (180, 180, 180),
+                        (offset_x + self.ui_panel_width, offset_y),
+                        (offset_x + self.ui_panel_width, offset_y + self.height), 2)
+
+        y = offset_y + 20
 
         # タイトル
         title = self.title_font.render("パラメータ", True, self.COLOR_TEXT)
-        self.screen.blit(title, (15, y))
-        y += 30
+        surface.blit(title, (offset_x + 15, y))
 
-        # 光源位置（読み取り専用）
-        text = self.small_font.render("光源位置", True, self.COLOR_TEXT)
-        self.screen.blit(text, (15, y))
-        y += 16
-        pos_text = self.small_font.render(f"X: {int(self.light_position[0])}, Y: {int(self.light_position[1])}", True, (100, 100, 100))
-        self.screen.blit(pos_text, (20, y))
+        # タブグループを描画
+        self.tab_group.x = offset_x + 10
+        self.tab_group.y = offset_y + 50
+        self.tab_group.draw(surface, self.small_font)
 
-        # スライダーを描画
+        # 現在のタブに属するスライダーのみ描画
+        active_tab = self.tab_group.active_tab
+        slider_count = 0
+        slider_start_y = 105  # タブの下からの開始位置
+        slider_spacing = 60   # スライダー間の間隔
         for slider in self.sliders:
-            slider.draw(self.screen, self.small_font)
+            if slider.tab_index == active_tab:
+                # スライダーの位置を動的に調整
+                slider.rect.x = offset_x + 20
+                slider.rect.y = offset_y + slider_start_y + slider_count * slider_spacing
+                slider.draw(surface, self.small_font)
+                slider_count += 1
 
-        # スライダーの下に光線数と操作説明を配置
-        # スライダーの最後の位置から計算
-        y = 115 + 55 * len(self.sliders) + 30
+        # スライダーの下に情報と操作説明を配置
+        y = offset_y + slider_start_y + slider_count * slider_spacing + 25
 
-        # 光線数（読み取り専用）
+        # 情報表示
+        info_title = self.font.render("情報", True, self.COLOR_TEXT)
+        surface.blit(info_title, (offset_x + 15, y))
+        y += 22
+
+        # 光源位置
+        pos_text = self.small_font.render(f"光源: X={int(self.light_position[0])}, Y={int(self.light_position[1])}", True, (100, 100, 100))
+        surface.blit(pos_text, (offset_x + 20, y))
+        y += 18
+
+        # 光線数
         text = self.small_font.render(f"光線数: {len(self.engine.rays)} 本", True, (100, 100, 100))
-        self.screen.blit(text, (15, y))
-        y += 30
+        surface.blit(text, (offset_x + 20, y))
+        y += 25
 
         # 操作説明
         help_title = self.font.render("操作方法", True, self.COLOR_TEXT)
-        self.screen.blit(help_title, (15, y))
-        y += 25
+        surface.blit(help_title, (offset_x + 15, y))
+        y += 22
 
         help_texts = [
             "左クリック: 光源移動(2D)",
@@ -1601,24 +1697,33 @@ class OpticsSimulator:
             "左右キー: 角度",
             "Q/E: 広がり",
             "↑↓: 水面",
-            "2/3キー: 2D/3D切替",
+            "1/2/3/4キー: ビュー切替",
             "H: ヒートマップ(3D)",
             "L: 光源表示(3D)",
             "R: リセット",
         ]
 
         for text in help_texts:
-            surface = self.small_font.render(text, True, (100, 100, 100))
-            self.screen.blit(surface, (20, y))
-            y += 18
+            help_surf = self.small_font.render(text, True, (100, 100, 100))
+            surface.blit(help_surf, (offset_x + 20, y))
+            y += 16
+
+    def draw_ui(self):
+        """UI要素を描画（2Dモード用）"""
+        self.draw_sidebar()
 
     def handle_events(self):
         """イベント処理"""
         for event in pygame.event.get():
-            # スライダーのイベント処理を優先
+            # タブのイベント処理を優先
+            if self.tab_group.handle_event(event):
+                continue
+
+            # スライダーのイベント処理（現在のタブに属するスライダーのみ）
             slider_handled = False
+            active_tab = self.tab_group.active_tab
             for slider in self.sliders:
-                if slider.handle_event(event):
+                if slider.tab_index == active_tab and slider.handle_event(event):
                     slider_handled = True
                     break
 
@@ -1641,46 +1746,46 @@ class OpticsSimulator:
                 elif event.key == pygame.K_UP:
                     # 水面を上げる
                     self.engine.water_level = max(50, self.engine.water_level - 1)
-                    self.sliders[2].value = int(self.engine.water_level)
+                    self.slider_map['water_level'].value = int(self.engine.water_level)
                     self.update_simulation()
                 elif event.key == pygame.K_DOWN:
                     # 水面を下げる
                     self.engine.water_level = min(self.view_height - 50, self.engine.water_level + 1)
-                    self.sliders[2].value = int(self.engine.water_level)
+                    self.slider_map['water_level'].value = int(self.engine.water_level)
                     self.update_simulation()
                 elif event.key == pygame.K_LEFT:
                     # 光の角度を左に
                     self.light_angle -= np.pi / 180  # 1度ずつ
-                    self.sliders[0].value = int(np.degrees(self.light_angle))
+                    self.slider_map['light_angle'].value = int(np.degrees(self.light_angle))
                     self.update_simulation()
                 elif event.key == pygame.K_RIGHT:
                     # 光の角度を右に
                     self.light_angle += np.pi / 180  # 1度ずつ
-                    self.sliders[0].value = int(np.degrees(self.light_angle))
+                    self.slider_map['light_angle'].value = int(np.degrees(self.light_angle))
                     self.update_simulation()
                 elif event.key == pygame.K_q:
                     # 光の広がりを狭く
                     self.light_spread = max(0, self.light_spread - np.pi / 180)  # 1度ずつ
-                    self.sliders[1].value = int(np.degrees(self.light_spread))
+                    self.slider_map['light_spread'].value = int(np.degrees(self.light_spread))
                     self.update_simulation()
                 elif event.key == pygame.K_e:
                     # 光の広がりを広く
                     self.light_spread = min(np.pi, self.light_spread + np.pi / 180)  # 1度ずつ
-                    self.sliders[1].value = int(np.degrees(self.light_spread))
+                    self.slider_map['light_spread'].value = int(np.degrees(self.light_spread))
                     self.update_simulation()
                 elif event.key == pygame.K_n:
                     # 屈折率を下げる（0.01刻み）
                     new_index = max(1.00, self.engine.water_refractive_index - 0.01)
                     self.engine.water_refractive_index = round(new_index, 2)
-                    self.sliders[3].value = self.engine.water_refractive_index
+                    self.slider_map['refractive_index'].value = self.engine.water_refractive_index
                     self.update_simulation()
                 elif event.key == pygame.K_m:
                     # 屈折率を上げる（0.01刻み）
                     new_index = min(2.00, self.engine.water_refractive_index + 0.01)
                     self.engine.water_refractive_index = round(new_index, 2)
-                    self.sliders[3].value = self.engine.water_refractive_index
+                    self.slider_map['refractive_index'].value = self.engine.water_refractive_index
                     self.update_simulation()
-                elif event.key == pygame.K_2:
+                elif event.key == pygame.K_1 or event.key == pygame.K_2:
                     # 2Dモードに切り替え
                     if self.view_mode_3d or self.view_mode_raytracing or self.view_mode_natural_3d:
                         self.view_mode_3d = False
@@ -1720,7 +1825,7 @@ class OpticsSimulator:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左クリック
                     # 2Dモード時のみ光源ドラッグ
-                    if not self.view_mode_3d:
+                    if not self.view_mode_3d and not self.view_mode_natural_3d:
                         mouse_pos = pygame.mouse.get_pos()
                         side_view_x = self.ui_panel_width + self.view_margin
                         side_view_y = 60
@@ -1959,9 +2064,107 @@ class OpticsSimulator:
         # ヒートマップキャッシュを更新
         self.calculate_heatmap_cache()
 
+    def draw_sidebar_overlay_3d(self):
+        """3Dビューの上にサイドバーをOpenGLで直接描画"""
+        # OpenGLの状態を保存
+        glDisable(GL_DEPTH_TEST)
+        glDisable(GL_LIGHTING)
+
+        # 2D正射影に切り替え
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        glOrtho(0, self.width, self.height, 0, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+
+        # サイドバー背景
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glColor4f(0.94, 0.94, 0.96, 0.95)
+        glBegin(GL_QUADS)
+        glVertex2f(0, 0)
+        glVertex2f(self.ui_panel_width, 0)
+        glVertex2f(self.ui_panel_width, self.height)
+        glVertex2f(0, self.height)
+        glEnd()
+
+        # 境界線
+        glColor4f(0.7, 0.7, 0.7, 1.0)
+        glLineWidth(2.0)
+        glBegin(GL_LINES)
+        glVertex2f(self.ui_panel_width, 0)
+        glVertex2f(self.ui_panel_width, self.height)
+        glEnd()
+
+        glDisable(GL_BLEND)
+
+        # 行列を元に戻す
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
+        glPopMatrix()
+
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+
+        # テキストとスライダーをPygameで描画してOpenGLテクスチャとして転送
+        # サイドバー用サーフェスを作成
+        sidebar_surf = pygame.Surface((self.ui_panel_width, self.height), pygame.SRCALPHA)
+        sidebar_surf.fill((240, 240, 245, 245))
+        self.draw_sidebar(sidebar_surf, 0, 0)
+
+        # PygameサーフェスをOpenGLで描画
+        self._blit_pygame_surface_to_opengl(sidebar_surf, 0, 0)
+
+    def _blit_pygame_surface_to_opengl(self, surface: pygame.Surface, x: int, y: int):
+        """PygameサーフェスをOpenGLで描画"""
+        # サーフェスのピクセルデータを取得
+        width = surface.get_width()
+        height = surface.get_height()
+
+        # RGBAデータを取得
+        data = pygame.image.tostring(surface, 'RGBA', True)
+
+        # OpenGLの状態を保存
+        glDisable(GL_DEPTH_TEST)
+        glDisable(GL_LIGHTING)
+
+        # 2D正射影
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        glOrtho(0, self.width, 0, self.height, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+
+        # ブレンディングを有効化
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        # ラスター位置を設定して描画
+        glRasterPos2i(x, self.height - y - height)
+        glDrawPixels(width, height, GL_RGBA, GL_UNSIGNED_BYTE, data)
+
+        glDisable(GL_BLEND)
+
+        # 行列を元に戻す
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
+        glPopMatrix()
+
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+
     def run(self):
         """メインループ"""
         self.update_simulation()
+
+        # サイドバー用のオーバーレイサーフェスを作成
+        self.sidebar_surface = pygame.Surface((self.ui_panel_width, self.height), pygame.SRCALPHA)
 
         while self.running:
             self.handle_events()
@@ -1970,10 +2173,12 @@ class OpticsSimulator:
             if self.view_mode_3d:
                 # 3Dモード（光線あり）
                 self.draw_3d_view()
+                self.draw_sidebar_overlay_3d()
                 pygame.display.flip()
             elif self.view_mode_natural_3d:
                 # 自然光3Dモード（光線なし）
                 self.draw_3d_view_natural()
+                self.draw_sidebar_overlay_3d()
                 pygame.display.flip()
             elif self.view_mode_raytracing:
                 # レイトレーシング風2Dモード（未使用）
