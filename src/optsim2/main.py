@@ -382,6 +382,16 @@ class OpticsSimulator:
         self.camera_drag_start = None
         self.camera_pan_start = None
 
+        # 3D視点切り替えボタン定義 (Label, Name, [Pitch, Yaw])
+        self.orientation_buttons = [
+            {'label': 'Front',  'angle': [0.0, 0.0]},     # XY Plane (+Z)
+            {'label': 'Back',   'angle': [0.0, 180.0]},   # XY Plane (-Z)
+            {'label': 'Right',  'angle': [0.0, 90.0]},    # YZ Plane (+X)
+            {'label': 'Left',   'angle': [0.0, -90.0]},   # YZ Plane (-X)
+            {'label': 'Top',    'angle': [90.0, 0.0]},    # XZ Plane (+Y)
+            {'label': 'Bottom', 'angle': [-90.0, 0.0]},   # XZ Plane (-Y)
+        ]
+
     def setup_default_scene(self):
         """デフォルトのシーンを設定"""
         # 水面の位置を設定
@@ -392,6 +402,63 @@ class OpticsSimulator:
         ball_x = self.view_width // 2
         ball_z = 0  # Z軸中心
         self.engine.add_ball((ball_x, ball_y, ball_z), 40)
+
+    def draw_orientation_buttons_overlay(self):
+        """3Dビュー上に視点切り替えボタンを描画"""
+        # 画面右上に配置
+        btn_width = 50
+        btn_height = 25
+        spacing_x = 5
+        spacing_y = 5
+        
+        start_x = self.width - (btn_width * 2 + spacing_x) - 20
+        start_y = 60 # タイトルバーの下あたり
+
+        mouse_pos = pygame.mouse.get_pos()
+        
+        # オーバーレイ用のSurfaceを作成
+        w = btn_width * 2 + spacing_x + 20
+        h = btn_height * 3 + spacing_y * 2 + 20
+        overlay_surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        # overlay_surf.fill((0, 0, 0, 100)) # 背景なし、ボタンのみ描画
+
+        # ボタン描画
+        for i, btn in enumerate(self.orientation_buttons):
+            row = i // 2
+            col = i % 2
+            
+            # Surface内の相対座標
+            bx = 10 + col * (btn_width + spacing_x)
+            by = 10 + row * (btn_height + spacing_y)
+            
+            # 実際の画面上での座標（ホバー判定用）
+            screen_bx = start_x + bx - 10 # start_xはパネル左上ではなくボタン配置基準なので調整が必要
+            # start_xはパネルの左端ではない。
+            # パネル左端 = start_x (ここではパネル左上を基準に描画ロジックを組むべきだった)
+            
+            # ロジック整理: パネルの左上座標
+            panel_x = self.width - (btn_width * 2 + spacing_x) - 20
+            panel_y = 60
+            
+            rect = pygame.Rect(bx, by, btn_width, btn_height)
+            screen_rect = pygame.Rect(panel_x + bx, panel_y + by, btn_width, btn_height)
+            
+            # ホバー判定
+            color = (80, 80, 90, 200)
+            if screen_rect.collidepoint(mouse_pos):
+                color = (120, 120, 130, 230)
+            
+            pygame.draw.rect(overlay_surf, color, rect)
+            pygame.draw.rect(overlay_surf, (200, 200, 200), rect, 1)
+            
+            # テキスト
+            text = self.small_font.render(btn['label'], True, (255, 255, 255))
+            text_rect = text.get_rect(center=rect.center)
+            overlay_surf.blit(text, text_rect)
+            
+        # OpenGL上に描画
+        # パネル左上の座標を指定
+        self._blit_pygame_surface_to_opengl(overlay_surf, self.width - (btn_width * 2 + spacing_x) - 20, 60)
 
     def init_opengl(self):
         """OpenGLの初期化"""
@@ -1904,6 +1971,37 @@ class OpticsSimulator:
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左クリック
+                    # 3Dモード時のUI操作
+                    if self.view_mode_3d or self.view_mode_natural_3d:
+                        mouse_pos = pygame.mouse.get_pos()
+                        
+                        # 視点切り替えボタンの判定
+                        btn_width = 50
+                        btn_height = 25
+                        spacing_x = 5
+                        spacing_y = 5
+                        start_x = self.width - (btn_width * 2 + spacing_x) - 20
+                        start_y = 60
+                        
+                        clicked_btn = False
+                        for i, btn in enumerate(self.orientation_buttons):
+                            row = i // 2
+                            col = i % 2
+                            x = start_x + col * (btn_width + spacing_x)
+                            y = start_y + row * (btn_height + spacing_y)
+                            rect = pygame.Rect(x, y, btn_width, btn_height)
+                            
+                            if rect.collidepoint(mouse_pos):
+                                # 視点切り替え実行
+                                target_angle = btn['angle']
+                                self.camera_rotation = list(target_angle) # コピー
+                                clicked_btn = True
+                                break
+                        
+                        if not clicked_btn:
+                            # ボタン以外なら何もしない（誤操作防止）
+                            pass
+
                     # 2Dモード時のみ光源ドラッグ
                     if not self.view_mode_3d and not self.view_mode_natural_3d:
                         mouse_pos = pygame.mouse.get_pos()
@@ -2197,6 +2295,9 @@ class OpticsSimulator:
 
         # PygameサーフェスをOpenGLで描画
         self._blit_pygame_surface_to_opengl(sidebar_surf, 0, 0)
+        
+        # 視点切り替えボタンを描画
+        self.draw_orientation_buttons_overlay()
 
     def _blit_pygame_surface_to_opengl(self, surface: pygame.Surface, x: int, y: int):
         """PygameサーフェスをOpenGLで描画"""
