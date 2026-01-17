@@ -416,139 +416,114 @@ class OpticsSimulator:
         self.engine.add_ball((ball_x, ball_y, ball_z), 40)
 
     def draw_orientation_buttons_overlay(self):
-        """3Dビュー上に視点切り替えボタンを描画"""
-        # 画面右上に配置
-        btn_width = 50
-        btn_height = 25
-        spacing_x = 5
-        spacing_y = 5
-        
-        start_x = self.width - (btn_width * 2 + spacing_x) - 20
-        start_y = 60 # タイトルバーの下あたり
+        """3Dビュー上に視点切り替えボタンを描画（モダンなデザイン）"""
+        # ボタンサイズとスペーシング
+        btn_width = 56
+        btn_height = 28
+        spacing_x = 6
+        spacing_y = 6
+        padding = 12
+        corner_radius = 6
+
+        # パネルサイズ計算
+        panel_width = btn_width * 2 + spacing_x + padding * 2
+        panel_height = btn_height * 5 + spacing_y * 4 + padding * 2
+
+        # パネル位置（画面右端から余裕をもって配置）
+        panel_x = self.width - panel_width - 15
+        panel_y = 55
 
         mouse_pos = pygame.mouse.get_pos()
-        
-        # オーバーレイ用のSurfaceを作成
-        # 5行分確保 (Orientation 3行 + Rotation 1行 + Analysis 1行)
-        w = btn_width * 2 + spacing_x + 20
-        h = btn_height * 5 + spacing_y * 4 + 20
-        overlay_surf = pygame.Surface((w, h), pygame.SRCALPHA)
-        # overlay_surf.fill((0, 0, 0, 100)) # 背景なし、ボタンのみ描画
 
-        # ボタン描画
+        # オーバーレイ用のSurfaceを作成
+        overlay_surf = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+
+        # パネル背景（角丸風の半透明背景）
+        pygame.draw.rect(overlay_surf, (30, 30, 40, 180),
+                         (0, 0, panel_width, panel_height),
+                         border_radius=corner_radius)
+        pygame.draw.rect(overlay_surf, (80, 80, 100, 150),
+                         (0, 0, panel_width, panel_height),
+                         width=1, border_radius=corner_radius)
+
+        def draw_modern_button(surf, rect, screen_rect, label, is_active=False, is_hovered=False):
+            """モダンなボタンを描画"""
+            # 色の設定
+            if is_active:
+                bg_color = (70, 130, 180, 230)  # アクティブ時は青系
+                border_color = (100, 160, 210, 255)
+            elif is_hovered:
+                bg_color = (70, 70, 85, 230)  # ホバー時は明るく
+                border_color = (140, 140, 160, 200)
+            else:
+                bg_color = (50, 50, 65, 220)  # 通常時
+                border_color = (100, 100, 120, 180)
+
+            # ボタン背景
+            pygame.draw.rect(surf, bg_color, rect, border_radius=4)
+            pygame.draw.rect(surf, border_color, rect, width=1, border_radius=4)
+
+            # テキスト
+            text = self.small_font.render(label, True, (240, 240, 245))
+            text_rect = text.get_rect(center=rect.center)
+            surf.blit(text, text_rect)
+
+        # 視点ボタン描画 (Front, Back, Right, Left, Top, Bottom)
         for i, btn in enumerate(self.orientation_buttons):
             row = i // 2
             col = i % 2
-            
-            # Surface内の相対座標
-            bx = 10 + col * (btn_width + spacing_x)
-            by = 10 + row * (btn_height + spacing_y)
-            
-            # 実際の画面上での座標（ホバー判定用）
-            screen_bx = start_x + bx - 10 # start_xはパネル左上ではなくボタン配置基準なので調整が必要
-            # start_xはパネルの左端ではない。
-            # パネル左端 = start_x (ここではパネル左上を基準に描画ロジックを組むべきだった)
-            
-            # ロジック整理: パネルの左上座標
-            panel_x = self.width - (btn_width * 2 + spacing_x) - 20
-            panel_y = 60
-            
-            rect = pygame.Rect(bx, by, btn_width, btn_height)
-            screen_rect = pygame.Rect(panel_x + bx, panel_y + by, btn_width, btn_height)
-            
-            # ホバー判定
-            color = (80, 80, 90, 200)
-            if screen_rect.collidepoint(mouse_pos):
-                color = (120, 120, 130, 230)
-            
-            pygame.draw.rect(overlay_surf, color, rect)
-            pygame.draw.rect(overlay_surf, (200, 200, 200), rect, 1)
-            
-            # テキスト
-            text = self.small_font.render(btn['label'], True, (255, 255, 255))
-            text_rect = text.get_rect(center=rect.center)
-            overlay_surf.blit(text, text_rect)
 
-        # 回転ボタン描画
-        panel_x = self.width - (btn_width * 2 + spacing_x) - 20
-        panel_y = 60
-        rotation_start_row = 3
-        
-        for i, btn in enumerate(self.rotation_buttons):
-            row = rotation_start_row
-            col = i % 2
-            
-            # Surface内の相対座標
-            bx = 10 + col * (btn_width + spacing_x)
-            by = 10 + row * (btn_height + spacing_y)
-            
+            bx = padding + col * (btn_width + spacing_x)
+            by = padding + row * (btn_height + spacing_y)
+
             rect = pygame.Rect(bx, by, btn_width, btn_height)
             screen_rect = pygame.Rect(panel_x + bx, panel_y + by, btn_width, btn_height)
-            
-            # ホバー判定
-            color = (80, 80, 90, 200)
-            if screen_rect.collidepoint(mouse_pos):
-                color = (120, 120, 130, 230)
-            
-            pygame.draw.rect(overlay_surf, color, rect)
-            pygame.draw.rect(overlay_surf, (200, 200, 200), rect, 1)
-            
-            text = self.small_font.render(btn['label'], True, (255, 255, 255))
-            text_rect = text.get_rect(center=rect.center)
-            overlay_surf.blit(text, text_rect)
-            
-            text_rect = text.get_rect(center=rect.center)
-            overlay_surf.blit(text, text_rect)
-            
+
+            is_hovered = screen_rect.collidepoint(mouse_pos)
+            draw_modern_button(overlay_surf, rect, screen_rect, btn['label'],
+                               is_active=False, is_hovered=is_hovered)
+
+        # 回転ボタン描画 (Rot R, Rot L)
+        rotation_start_row = 3
+        for i, btn in enumerate(self.rotation_buttons):
+            col = i % 2
+
+            bx = padding + col * (btn_width + spacing_x)
+            by = padding + rotation_start_row * (btn_height + spacing_y)
+
+            rect = pygame.Rect(bx, by, btn_width, btn_height)
+            screen_rect = pygame.Rect(panel_x + bx, panel_y + by, btn_width, btn_height)
+
+            is_hovered = screen_rect.collidepoint(mouse_pos)
+            draw_modern_button(overlay_surf, rect, screen_rect, btn['label'],
+                               is_active=False, is_hovered=is_hovered)
+
         # Profile/Axisボタン描画 (最下段)
         profile_row = 4
-        # 1行に2つのボタンを配置
-        # 左: Profile ON/OFF
-        # 右: Axis X/Y
-        
+
         # Profile Button
-        p1_width = btn_width
-        bx1 = 10
-        by = 10 + profile_row * (btn_height + spacing_y)
-        rect1 = pygame.Rect(bx1, by, p1_width, btn_height)
-        screen_rect1 = pygame.Rect(panel_x + bx1, panel_y + by, p1_width, btn_height)
-        
-        if self.profile_mode:
-            c1 = (100, 150, 200, 230)
-        elif screen_rect1.collidepoint(mouse_pos):
-            c1 = (120, 120, 130, 230)
-        else:
-            c1 = (80, 80, 90, 200)
-            
-        pygame.draw.rect(overlay_surf, c1, rect1)
-        pygame.draw.rect(overlay_surf, (200, 200, 200), rect1, 1)
-        
+        bx1 = padding
+        by = padding + profile_row * (btn_height + spacing_y)
+        rect1 = pygame.Rect(bx1, by, btn_width, btn_height)
+        screen_rect1 = pygame.Rect(panel_x + bx1, panel_y + by, btn_width, btn_height)
+
+        is_hovered1 = screen_rect1.collidepoint(mouse_pos)
         t1 = "Prof:ON" if self.profile_mode else "Prof:OFF"
-        text1 = self.small_font.render(t1, True, (255, 255, 255))
-        tr1 = text1.get_rect(center=rect1.center)
-        overlay_surf.blit(text1, tr1)
-        
+        draw_modern_button(overlay_surf, rect1, screen_rect1, t1,
+                           is_active=self.profile_mode, is_hovered=is_hovered1)
+
         # Axis Button
-        bx2 = 10 + btn_width + spacing_x
-        rect2 = pygame.Rect(bx2, by, p1_width, btn_height)
-        screen_rect2 = pygame.Rect(panel_x + bx2, panel_y + by, p1_width, btn_height)
-        
-        if screen_rect2.collidepoint(mouse_pos):
-            c2 = (120, 120, 130, 230)
-        else:
-            c2 = (80, 80, 90, 200)
-            
-        pygame.draw.rect(overlay_surf, c2, rect2)
-        pygame.draw.rect(overlay_surf, (200, 200, 200), rect2, 1)
-        
+        bx2 = padding + btn_width + spacing_x
+        rect2 = pygame.Rect(bx2, by, btn_width, btn_height)
+        screen_rect2 = pygame.Rect(panel_x + bx2, panel_y + by, btn_width, btn_height)
+
+        is_hovered2 = screen_rect2.collidepoint(mouse_pos)
         t2 = f"Axis: {self.profile_scan_axis}"
-        text2 = self.small_font.render(t2, True, (255, 255, 255))
-        tr2 = text2.get_rect(center=rect2.center)
-        overlay_surf.blit(text2, tr2)
+        draw_modern_button(overlay_surf, rect2, screen_rect2, t2,
+                           is_active=False, is_hovered=is_hovered2)
 
         # OpenGL上に描画
-        # パネル左上の座標を指定
-        self._blit_pygame_surface_to_opengl(overlay_surf, self.width - (btn_width * 2 + spacing_x) - 20, 60)
+        self._blit_pygame_surface_to_opengl(overlay_surf, panel_x, panel_y)
 
     def init_opengl(self):
         """OpenGLの初期化"""
@@ -1651,34 +1626,12 @@ class OpticsSimulator:
             zoomed_pos = (pos_2d[0] * zoom, pos_2d[1] * zoom)
             zoomed_radius = radius * zoom
 
-            # 最大強度を取得
-            max_intensity = max(self.ball_intensity_map.values()) if self.ball_intensity_map else 1.0
-
-            # 球を角度ごとに分割して描画（ヒートマップ）
-            # 角度は-180～180度の範囲
-            for angle_deg in range(-180, 180):
-                # この角度の強度を取得
-                intensity = self.ball_intensity_map.get(angle_deg, 0)
-
-                # 強度から色を計算
-                color = self.get_intensity_color(intensity, max_intensity)
-
-                # 扇形を描画
-                angle_rad = np.radians(angle_deg)
-                next_angle_rad = np.radians(angle_deg + 1)
-
-                # 扇形の頂点を計算（ズーム適用）
-                points = [
-                    zoomed_pos,
-                    (zoomed_pos[0] + zoomed_radius * np.cos(angle_rad), zoomed_pos[1] + zoomed_radius * np.sin(angle_rad)),
-                    (zoomed_pos[0] + zoomed_radius * np.cos(next_angle_rad), zoomed_pos[1] + zoomed_radius * np.sin(next_angle_rad))
-                ]
-                points_int = [(int(p[0]), int(p[1])) for p in points]
-
-                pygame.draw.polygon(view_surface, color, points_int)
-
+            # 球をシンプルな円として描画
+            pygame.draw.circle(view_surface, self.COLOR_BALL, 
+                             (int(zoomed_pos[0]), int(zoomed_pos[1])), int(zoomed_radius))
             # 球の輪郭
-            pygame.draw.circle(view_surface, (200, 50, 50), (int(zoomed_pos[0]), int(zoomed_pos[1])), int(zoomed_radius), 2)
+            pygame.draw.circle(view_surface, (200, 50, 50), 
+                             (int(zoomed_pos[0]), int(zoomed_pos[1])), int(zoomed_radius), 2)
 
         # 光線を描画（X-Y平面への投影）
         for ray in self.engine.rays:
@@ -1780,10 +1733,9 @@ class OpticsSimulator:
         # 上面図: Y=0が上、Y=view_heightが下
         top_light_y = int(self.light_position[1] * zoom)
 
-        # 複数光源を描画（独立した個数・間隔で中央配置）
+        # 複数光源を描画（丸い形状で中央配置）
         light_z_spacing = self.light_spacing_mm * self.mm_to_pixel * zoom
-        halogen_width = 60 * zoom  # X方向の幅（横に長い）
-        halogen_depth = 20 * zoom  # Y方向の奥行き
+        light_radius = int(10 * zoom)  # 光源の半径
 
         # 中心配置のオフセット計算
         total_light_width = (self.light_count - 1) * light_z_spacing
@@ -1793,14 +1745,11 @@ class OpticsSimulator:
             # 中心がZ=0になるように配置（上面図では-Zが右側）
             light_z_offset = start_light_offset - i * light_z_spacing
             light_offset_x = -light_z_offset  # -Zが右側なので符号反転
-            halogen_rect = pygame.Rect(
-                int(top_light_x - halogen_width // 2 + light_offset_x),
-                int(top_light_y - halogen_depth // 2),
-                int(halogen_width),
-                int(halogen_depth)
-            )
-            pygame.draw.rect(view_surface, (255, 255, 200), halogen_rect)
-            pygame.draw.rect(view_surface, (200, 200, 0), halogen_rect, max(1, int(2 * zoom)))
+            light_x = int(top_light_x + light_offset_x)
+            light_y = int(top_light_y)
+            # 丸い光源を描画
+            pygame.draw.circle(view_surface, self.COLOR_LIGHT_SOURCE, (light_x, light_y), light_radius)
+            pygame.draw.circle(view_surface, (200, 200, 0), (light_x, light_y), light_radius, max(1, int(2 * zoom)))
 
         # 球を描画（横図のY座標を上面図のY座標に変換、Z座標でX位置をオフセット）
         for ball in self.engine.balls:
@@ -1812,32 +1761,25 @@ class OpticsSimulator:
             pygame.draw.circle(view_surface, self.COLOR_BALL, (top_x, top_y), int(radius * zoom))
             pygame.draw.circle(view_surface, (200, 50, 50), (top_x, top_y), int(radius * zoom), max(2, int(2 * zoom)))
 
-        # 光線を縦線として描画（上から下に向かう、画面中央から広がる）
-        num_rays = len(self.engine.rays)
-
-        # 球のY座標を取得（3D座標のY成分）
-        ball_y = int(self.engine.balls[0]['position'][1] * zoom) if self.engine.balls else int((self.view_height - 150) * zoom)
-
-        for idx, ray in enumerate(self.engine.rays):
+        # 光線を描画（X-Z平面への投影: X→画面横、Z→画面横オフセット、Y→画面縦）
+        for ray in self.engine.rays:
             if len(ray.path) > 1:
-                # 光線のX座標を中央からの広がりとして計算
-                # 横図での光線の広がり具合を上面図でも反映
-                ray_offset_ratio = (idx - num_rays / 2) / (num_rays / 2)  # -1.0 ～ 1.0
-                spread_width = 150 * zoom  # 光の広がり幅
-                ray_x = int(top_light_x + ray_offset_ratio * spread_width * np.sin(self.light_spread / 2))
-
-                # 縦線として描画（ハロゲンの下端から球の位置まで）
-                start_y = int(top_light_y + halogen_depth // 2)
-                end_y = ball_y  # 球のY座標まで
+                # 3D光線パスを上面図座標に変換
+                # X座標: view_width/2を中心に、Z座標でオフセット（-Zが右）
+                # Y座標: 3DのY座標をそのまま使用
+                points = []
+                for p in ray.path:
+                    px = int((self.view_width // 2) * zoom - p[2] * zoom)  # Z→横方向
+                    py = int(p[1] * zoom)  # Y→縦方向
+                    points.append((px, py))
 
                 # 線の色
                 alpha = int(ray.intensity * 200)
                 color = (*self.COLOR_RAY[:3], min(alpha, 255))
 
-                # 縦線として描画
-                pygame.draw.line(view_surface, color,
-                               (ray_x, start_y),
-                               (ray_x, end_y), max(1, int(zoom)))
+                # パスに沿って描画
+                for i in range(len(points) - 1):
+                    pygame.draw.line(view_surface, color, points[i], points[i + 1], max(1, int(2 * zoom)))
 
         # ビューサーフェスを画面に描画（中央部分を切り取って表示）
         if zoom > 1.0:
@@ -2073,79 +2015,73 @@ class OpticsSimulator:
                     # 3Dモード時のUI操作
                     if self.view_mode_3d or self.view_mode_natural_3d:
                         mouse_pos = pygame.mouse.get_pos()
-                        
-                        # 視点切り替えボタンの判定
-                        btn_width = 50
-                        btn_height = 25
-                        spacing_x = 5
-                        spacing_y = 5
-                        start_x = self.width - (btn_width * 2 + spacing_x) - 20
-                        start_y = 60
-                        
+
+                        # 視点切り替えボタンの判定（描画関数と同じパラメータ）
+                        btn_width = 56
+                        btn_height = 28
+                        spacing_x = 6
+                        spacing_y = 6
+                        padding = 12
+
+                        panel_width = btn_width * 2 + spacing_x + padding * 2
+                        panel_x = self.width - panel_width - 15
+                        panel_y = 55
+
                         clicked_btn = False
                         for i, btn in enumerate(self.orientation_buttons):
                             row = i // 2
                             col = i % 2
-                            x = start_x + col * (btn_width + spacing_x)
-                            y = start_y + row * (btn_height + spacing_y)
+                            x = panel_x + padding + col * (btn_width + spacing_x)
+                            y = panel_y + padding + row * (btn_height + spacing_y)
                             rect = pygame.Rect(x, y, btn_width, btn_height)
-                            
+
                             if rect.collidepoint(mouse_pos):
                                 # 視点切り替え実行
                                 target_angle = btn['angle']
-                                self.camera_rotation = list(target_angle) # コピー
-                                clicked_btn = True
-                                self.camera_rotation = list(target_angle) # コピー
+                                self.camera_rotation = list(target_angle)
                                 clicked_btn = True
                                 break
-                        
+
                         # 回転ボタン判定
                         if not clicked_btn:
                             rotation_start_row = 3
                             for i, btn in enumerate(self.rotation_buttons):
-                                row = rotation_start_row
                                 col = i % 2
-                                x = start_x + col * (btn_width + spacing_x)
-                                y = start_y + row * (btn_height + spacing_y)
+                                x = panel_x + padding + col * (btn_width + spacing_x)
+                                y = panel_y + padding + rotation_start_row * (btn_height + spacing_y)
                                 rect = pygame.Rect(x, y, btn_width, btn_height)
-                                
+
                                 if rect.collidepoint(mouse_pos):
                                     self.camera_rotation[1] += btn['delta']
                                     clicked_btn = True
                                     break
-                        
-                                    clicked_btn = True
-                                    break
-                                    
-                                    break
-                                    
+
                         # Profile/Axisボタン判定
                         if not clicked_btn:
                             profile_row = 4
-                            p_width = btn_width
-                            
+
                             # Profile Button (Left)
-                            bx1 = 10
-                            by = 10 + profile_row * (btn_height + spacing_y)
-                            rect1 = pygame.Rect(start_x + bx1 - 10, start_y + by, p_width, btn_height)
-                            
+                            bx1 = panel_x + padding
+                            by = panel_y + padding + profile_row * (btn_height + spacing_y)
+                            rect1 = pygame.Rect(bx1, by, btn_width, btn_height)
+
                             if rect1.collidepoint(mouse_pos):
                                 self.profile_mode = not self.profile_mode
                                 clicked_btn = True
-                                
+
                             # Axis Button (Right)
                             if not clicked_btn:
-                                bx2 = 10 + btn_width + spacing_x
-                                rect2 = pygame.Rect(start_x + bx2 - 10, start_y + by, p_width, btn_height)
-                                
+                                bx2 = panel_x + padding + btn_width + spacing_x
+                                rect2 = pygame.Rect(bx2, by, btn_width, btn_height)
+
                                 if rect2.collidepoint(mouse_pos):
                                     # Toggle Axis
                                     if self.profile_scan_axis == 'Y':
                                         self.profile_scan_axis = 'X'
-                                        self.profile_pos = self.height // 2  # 画面中央にリセット
+                                        self.profile_pos = self.height // 2
                                     else:
                                         self.profile_scan_axis = 'Y'
-                                        self.profile_pos = self.width // 2  # 画面中央にリセット
+                                        self.profile_pos = self.width // 2
                                     clicked_btn = True
                         
                         # プロファイルラインのドラッグ判定
