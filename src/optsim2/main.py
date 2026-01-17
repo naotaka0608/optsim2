@@ -398,6 +398,11 @@ class OpticsSimulator:
             {'label': 'Rot L', 'delta': -90.0},
         ]
 
+        # 輝度プロファイル機能の状態
+        self.profile_mode = False  # プロファイル表示モード
+        self.profile_scan_axis = 'Y'  # 'X' or 'Y'
+        self.profile_pos = 0  # スキャン位置
+
     def setup_default_scene(self):
         """デフォルトのシーンを設定"""
         # 水面の位置を設定
@@ -423,9 +428,9 @@ class OpticsSimulator:
         mouse_pos = pygame.mouse.get_pos()
         
         # オーバーレイ用のSurfaceを作成
-        # 4行分確保 (Orientation 3行 + Rotation 1行)
+        # 5行分確保 (Orientation 3行 + Rotation 1行 + Analysis 1行)
         w = btn_width * 2 + spacing_x + 20
-        h = btn_height * 4 + spacing_y * 3 + 20
+        h = btn_height * 5 + spacing_y * 4 + 20
         overlay_surf = pygame.Surface((w, h), pygame.SRCALPHA)
         # overlay_surf.fill((0, 0, 0, 100)) # 背景なし、ボタンのみ描画
 
@@ -491,6 +496,55 @@ class OpticsSimulator:
             text_rect = text.get_rect(center=rect.center)
             overlay_surf.blit(text, text_rect)
             
+            text_rect = text.get_rect(center=rect.center)
+            overlay_surf.blit(text, text_rect)
+            
+        # Profile/Axisボタン描画 (最下段)
+        profile_row = 4
+        # 1行に2つのボタンを配置
+        # 左: Profile ON/OFF
+        # 右: Axis X/Y
+        
+        # Profile Button
+        p1_width = btn_width
+        bx1 = 10
+        by = 10 + profile_row * (btn_height + spacing_y)
+        rect1 = pygame.Rect(bx1, by, p1_width, btn_height)
+        screen_rect1 = pygame.Rect(panel_x + bx1, panel_y + by, p1_width, btn_height)
+        
+        if self.profile_mode:
+            c1 = (100, 150, 200, 230)
+        elif screen_rect1.collidepoint(mouse_pos):
+            c1 = (120, 120, 130, 230)
+        else:
+            c1 = (80, 80, 90, 200)
+            
+        pygame.draw.rect(overlay_surf, c1, rect1)
+        pygame.draw.rect(overlay_surf, (200, 200, 200), rect1, 1)
+        
+        t1 = "Prof:ON" if self.profile_mode else "Prof:OFF"
+        text1 = self.small_font.render(t1, True, (255, 255, 255))
+        tr1 = text1.get_rect(center=rect1.center)
+        overlay_surf.blit(text1, tr1)
+        
+        # Axis Button
+        bx2 = 10 + btn_width + spacing_x
+        rect2 = pygame.Rect(bx2, by, p1_width, btn_height)
+        screen_rect2 = pygame.Rect(panel_x + bx2, panel_y + by, p1_width, btn_height)
+        
+        if screen_rect2.collidepoint(mouse_pos):
+            c2 = (120, 120, 130, 230)
+        else:
+            c2 = (80, 80, 90, 200)
+            
+        pygame.draw.rect(overlay_surf, c2, rect2)
+        pygame.draw.rect(overlay_surf, (200, 200, 200), rect2, 1)
+        
+        t2 = f"Axis: {self.profile_scan_axis}"
+        text2 = self.small_font.render(t2, True, (255, 255, 255))
+        tr2 = text2.get_rect(center=rect2.center)
+        overlay_surf.blit(text2, tr2)
+
         # OpenGL上に描画
         # パネル左上の座標を指定
         self._blit_pygame_surface_to_opengl(overlay_surf, self.width - (btn_width * 2 + spacing_x) - 20, 60)
@@ -1967,6 +2021,15 @@ class OpticsSimulator:
                     self.engine.water_refractive_index = round(new_index, 2)
                     self.slider_map['refractive_index'].value = self.engine.water_refractive_index
                     self.update_simulation()
+                elif event.key == pygame.K_p:
+                    # プロファイルモード切替
+                    self.profile_mode = not self.profile_mode
+                elif event.key == pygame.K_x:
+                    # プロファイルX軸スキャン（水平）
+                    self.profile_scan_axis = 'X'
+                elif event.key == pygame.K_y:
+                    # プロファイルY軸スキャン（垂直）
+                    self.profile_scan_axis = 'Y'
                 elif event.key == pygame.K_1 or event.key == pygame.K_2:
                     # 2Dモードに切り替え
                     if self.view_mode_3d or self.view_mode_raytracing or self.view_mode_natural_3d:
@@ -2049,6 +2112,38 @@ class OpticsSimulator:
                                     self.camera_rotation[1] += btn['delta']
                                     clicked_btn = True
                                     break
+                        
+                                    clicked_btn = True
+                                    break
+                                    
+                                    break
+                                    
+                        # Profile/Axisボタン判定
+                        if not clicked_btn:
+                            profile_row = 4
+                            p_width = btn_width
+                            
+                            # Profile Button (Left)
+                            bx1 = 10
+                            by = 10 + profile_row * (btn_height + spacing_y)
+                            rect1 = pygame.Rect(start_x + bx1 - 10, start_y + by, p_width, btn_height)
+                            
+                            if rect1.collidepoint(mouse_pos):
+                                self.profile_mode = not self.profile_mode
+                                clicked_btn = True
+                                
+                            # Axis Button (Right)
+                            if not clicked_btn:
+                                bx2 = 10 + btn_width + spacing_x
+                                rect2 = pygame.Rect(start_x + bx2 - 10, start_y + by, p_width, btn_height)
+                                
+                                if rect2.collidepoint(mouse_pos):
+                                    # Toggle Axis
+                                    if self.profile_scan_axis == 'Y':
+                                        self.profile_scan_axis = 'X'
+                                    else:
+                                        self.profile_scan_axis = 'Y'
+                                    clicked_btn = True
                         
                         if not clicked_btn:
                             # ボタン以外なら何もしない（誤操作防止）
@@ -2351,6 +2446,136 @@ class OpticsSimulator:
         # 視点切り替えボタンを描画
         self.draw_orientation_buttons_overlay()
 
+    def draw_profile_overlay(self):
+        """輝度プロファイルを描画"""
+        # マウス位置に基づいてスキャンラインを決定
+        mouse_pos = pygame.mouse.get_pos()
+        
+        # マウス座標は左上原点だが、OpenGLは左下原点の場合がある
+        # glReadPixelsは左下原点。Pygameは左上。
+        # ここではPygame座標系(左上原点)で統一して考える。
+        
+        # スキャン位置の更新（マウスが画面内にある場合）
+        if 0 <= mouse_pos[0] < self.width and 0 <= mouse_pos[1] < self.height:
+            if self.profile_scan_axis == 'Y': # 垂直ライン（画面上のY軸に沿った分布 = 特定のX座標における縦のライン？）
+                # ユーザーの要望「Z方向の軸の輝度」-> Top View(XZ)では画面の縦方向がZ。
+                # この場合、「X座標を固定して、縦にスキャン」したい。
+                self.profile_pos = mouse_pos[0] # 固定するX座標
+            else:
+                self.profile_pos = mouse_pos[1] # 固定するY座標
+        
+        # 画面キャプチャ
+        # glReadPixels(x, y, width, height, format, type)
+        # 現在のビューポート全体を取得
+        # 注意: glReadPixelsは左下原点。
+        pixels = glReadPixels(0, 0, self.width, self.height, GL_RGB, GL_UNSIGNED_BYTE)
+        
+        # numpy配列に変換
+        # shape: (height, width, 3)
+        img_array = np.frombuffer(pixels, dtype=np.uint8).reshape(self.height, self.width, 3)
+        
+        # 上下反転（OpenGL -> Pygame/Image座標系）
+        img_array = np.flipud(img_array)
+        
+        # プロファイルデータの抽出
+        if self.profile_scan_axis == 'Y':
+            # Xを固定してY方向にスキャン（縦ライン）
+            # self.profile_pos は X座標
+            x = int(max(0, min(self.width - 1, self.profile_pos)))
+            line_data = img_array[:, x, :] # (Height, 3)
+            # 輝度計算 (簡易: 平均)
+            intensity = np.mean(line_data, axis=1) # (Height,)
+            axis_len = self.height
+        else:
+            # Yを固定してX方向にスキャン（横ライン）
+            y = int(max(0, min(self.height - 1, self.profile_pos)))
+            line_data = img_array[y, :, :] # (Width, 3)
+            intensity = np.mean(line_data, axis=1) # (Width,)
+            axis_len = self.width
+            
+        # 背景色を除去
+        # スキャンライン上の最頻出色を背景色とみなす（動的判定）
+        if len(line_data) > 0:
+            # 高速化のため、line_dataそのものからユニークカウント
+            colors, counts = np.unique(line_data.reshape(-1, 3), axis=0, return_counts=True)
+            if len(counts) > 0:
+                bg_color = colors[np.argmax(counts)]
+            else:
+                bg_color = np.array([25, 25, 38])
+                
+            # 背景色の許容範囲 (誤差20)
+            diff = np.abs(line_data.astype(np.int16) - bg_color)
+            is_bg = np.all(diff < 20, axis=1)
+            intensity[is_bg] = 0
+            
+        # グラフ描画用Surface
+        graph_height = 200 # 高さを増やす
+        plot_x_start = 100 # 左マージンをさらに拡大 (数値が見えない問題対策)
+        graph_width = self.width - (plot_x_start + 20) # 右マージン20
+        plot_y_end = graph_height - 30 # 下マージン
+        plot_top = 20 # 上マージン
+        plot_h = plot_y_end - plot_top # 描画高さ
+        
+        s = pygame.Surface((self.width, graph_height), pygame.SRCALPHA)
+        s.fill((0, 0, 0, 200)) # 背景を少し濃くする
+        
+        # グリッドとラベルの描画
+        # Y軸 (0 - 255)
+        # 一番上の線を255にする
+        y_ticks = [0, 50, 100, 150, 200, 255]
+        for val in y_ticks:
+            py = plot_y_end - (val / 255.0) * plot_h
+            # グリッド線
+            pygame.draw.line(s, (80, 80, 80), (plot_x_start, py), (plot_x_start + graph_width, py), 1)
+            # ラベル (文字色を白く、位置調整)
+            label = self.small_font.render(str(val), True, (255, 255, 255))
+            label_rect = label.get_rect(midright=(plot_x_start - 10, py))
+            s.blit(label, label_rect)
+            
+        # X軸 (ピクセル位置)
+        x_steps = 10
+        for i in range(x_steps + 1):
+            val = int((i / x_steps) * axis_len)
+            px = plot_x_start + (i / x_steps) * graph_width
+            # グリッド線
+            pygame.draw.line(s, (80, 80, 80), (px, plot_y_end), (px, plot_y_end - plot_h), 1)
+            # ラベル (間引いて表示)
+            if i % 2 == 0:
+                label = self.small_font.render(str(val), True, (200, 200, 200))
+                label_rect = label.get_rect(midtop=(px, plot_y_end + 5))
+                s.blit(label, label_rect)
+
+        # 軸線
+        pygame.draw.line(s, (200, 200, 200), (plot_x_start, plot_y_end), (plot_x_start + graph_width, plot_y_end), 2) # X軸
+        pygame.draw.line(s, (200, 200, 200), (plot_x_start, plot_y_end), (plot_x_start, plot_y_end - plot_h), 2) # Y軸
+        
+        points = []
+        for i in range(len(intensity)):
+            # x座標: グラフ幅に合わせてスケーリング
+            px = plot_x_start + (i / axis_len) * graph_width
+            # y座標: 輝度に合わせて高さ計算（輝度が高いほど上）
+            py = plot_y_end - (intensity[i] / 255.0) * plot_h
+            points.append((px, py))
+            
+        if len(points) > 1:
+            pygame.draw.lines(s, (255, 255, 0), False, points, 2)
+            
+        # ガイド線（現在のスキャン位置）
+        # スキャンしている場所を示す線を描画するSurface
+        guide_s = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        if self.profile_scan_axis == 'Y':
+            x = int(max(0, min(self.width - 1, self.profile_pos)))
+            pygame.draw.line(guide_s, (255, 0, 0), (x, 0), (x, self.height), 1)
+        else:
+            y = int(max(0, min(self.height - 1, self.profile_pos)))
+            pygame.draw.line(guide_s, (255, 0, 0), (0, y), (self.width, y), 1)
+            
+        # OpenGL描画
+        # まずガイド線
+        self._blit_pygame_surface_to_opengl(guide_s, 0, 0)
+        # 次にグラフ（画面下部）
+        self._blit_pygame_surface_to_opengl(s, 0, self.height - graph_height)
+
     def _blit_pygame_surface_to_opengl(self, surface: pygame.Surface, x: int, y: int):
         """PygameサーフェスをOpenGLで描画"""
         # サーフェスのピクセルデータを取得
@@ -2419,11 +2644,15 @@ class OpticsSimulator:
             if self.view_mode_3d:
                 # 3Dモード（光線あり）
                 self.draw_3d_view()
+                if self.profile_mode:
+                    self.draw_profile_overlay()
                 self.draw_sidebar_overlay_3d()
                 pygame.display.flip()
             elif self.view_mode_natural_3d:
                 # 自然光3Dモード（光線なし）
                 self.draw_3d_view_natural()
+                if self.profile_mode:
+                    self.draw_profile_overlay()
                 self.draw_sidebar_overlay_3d()
                 pygame.display.flip()
             elif self.view_mode_raytracing:
