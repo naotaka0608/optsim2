@@ -327,6 +327,15 @@ class OpticsSimulator:
             tab_index=2
         ))
 
+        # 水面ゆらぎ強度スライダー
+        self.sliders.append(Slider(
+            slider_x, slider_y_start + slider_spacing * 2, slider_width,
+            0.0, 1.0, self.engine.water_ripple_strength,
+            "水面ゆらぎ",
+            lambda v: self._set_water_ripple(v),
+            tab_index=2
+        ))
+
         # スライダーを名前で参照するための辞書
         self.slider_map = {
             'light_angle': self.sliders[0],
@@ -339,6 +348,7 @@ class OpticsSimulator:
             'ball_spacing': self.sliders[7],
             'water_level': self.sliders[8],
             'refractive_index': self.sliders[9],
+            'water_ripple': self.sliders[10],
         }
 
         # 初期状態で球を再構築
@@ -657,7 +667,7 @@ class OpticsSimulator:
         glEnable(GL_LIGHTING)
 
     def draw_water_plane_3d(self):
-        """3D水面を描画（半透明）"""
+        """3D水面を描画（半透明、ゆらぎ対応）"""
         # 水面のY座標を計算（2D座標系を3D座標系に変換）
         water_y = -(self.engine.water_level - self.view_height / 2)
 
@@ -665,29 +675,76 @@ class OpticsSimulator:
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
-        # 水面の平面（半透明）
-        glColor4f(0.2, 0.5, 0.8, 0.4)
         size = 500
-        glBegin(GL_QUADS)
-        glVertex3f(-size, water_y, -size)
-        glVertex3f(size, water_y, -size)
-        glVertex3f(size, water_y, size)
-        glVertex3f(-size, water_y, size)
-        glEnd()
+        ripple_strength = self.engine.water_ripple_strength
 
-        # グリッド線
-        glColor4f(0.3, 0.6, 0.9, 0.5)
-        glLineWidth(1.0)
-        step = 50
-        glBegin(GL_LINES)
-        for i in range(-10, 11):
-            # X方向の線
-            glVertex3f(i * step, water_y, -size)
-            glVertex3f(i * step, water_y, size)
-            # Z方向の線
-            glVertex3f(-size, water_y, i * step)
-            glVertex3f(size, water_y, i * step)
-        glEnd()
+        if ripple_strength > 0:
+            # ゆらぎありの場合、メッシュで描画
+            step = 25  # メッシュの細かさ
+            freq = self.engine.water_ripple_frequency
+            t = self.engine.water_ripple_time
+            amplitude = ripple_strength * 15  # 高さの振幅
+
+            glColor4f(0.2, 0.5, 0.8, 0.4)
+            for i in range(-size, size, step):
+                glBegin(GL_QUAD_STRIP)
+                for j in range(-size, size + step, step):
+                    for x in [i, i + step]:
+                        # ゆらぎの高さを計算
+                        ripple = (math.sin(x * freq + t) +
+                                  0.5 * math.sin(x * freq * 2.3 + t * 1.7) +
+                                  0.3 * math.sin(j * freq * 0.7 + t * 0.8) +
+                                  math.sin(j * freq + t * 1.2) * 0.7)
+                        y_offset = ripple * amplitude
+                        glVertex3f(x, water_y + y_offset, j)
+                glEnd()
+
+            # グリッド線（ゆらぎあり）
+            glColor4f(0.3, 0.6, 0.9, 0.5)
+            glLineWidth(1.0)
+            grid_step = 50
+            glBegin(GL_LINES)
+            for i in range(-10, 11):
+                # X方向の線
+                for j in range(-size, size, step):
+                    x = i * grid_step
+                    ripple1 = (math.sin(x * freq + t) + 0.5 * math.sin(x * freq * 2.3 + t * 1.7) +
+                               0.3 * math.sin(j * freq * 0.7 + t * 0.8) + math.sin(j * freq + t * 1.2) * 0.7)
+                    ripple2 = (math.sin(x * freq + t) + 0.5 * math.sin(x * freq * 2.3 + t * 1.7) +
+                               0.3 * math.sin((j + step) * freq * 0.7 + t * 0.8) + math.sin((j + step) * freq + t * 1.2) * 0.7)
+                    glVertex3f(x, water_y + ripple1 * amplitude, j)
+                    glVertex3f(x, water_y + ripple2 * amplitude, j + step)
+                # Z方向の線
+                for j in range(-size, size, step):
+                    z = i * grid_step
+                    ripple1 = (math.sin(j * freq + t) + 0.5 * math.sin(j * freq * 2.3 + t * 1.7) +
+                               0.3 * math.sin(z * freq * 0.7 + t * 0.8) + math.sin(z * freq + t * 1.2) * 0.7)
+                    ripple2 = (math.sin((j + step) * freq + t) + 0.5 * math.sin((j + step) * freq * 2.3 + t * 1.7) +
+                               0.3 * math.sin(z * freq * 0.7 + t * 0.8) + math.sin(z * freq + t * 1.2) * 0.7)
+                    glVertex3f(j, water_y + ripple1 * amplitude, z)
+                    glVertex3f(j + step, water_y + ripple2 * amplitude, z)
+            glEnd()
+        else:
+            # ゆらぎなしの場合、フラットな平面
+            glColor4f(0.2, 0.5, 0.8, 0.4)
+            glBegin(GL_QUADS)
+            glVertex3f(-size, water_y, -size)
+            glVertex3f(size, water_y, -size)
+            glVertex3f(size, water_y, size)
+            glVertex3f(-size, water_y, size)
+            glEnd()
+
+            # グリッド線
+            glColor4f(0.3, 0.6, 0.9, 0.5)
+            glLineWidth(1.0)
+            step = 50
+            glBegin(GL_LINES)
+            for i in range(-10, 11):
+                glVertex3f(i * step, water_y, -size)
+                glVertex3f(i * step, water_y, size)
+                glVertex3f(-size, water_y, i * step)
+                glVertex3f(size, water_y, i * step)
+            glEnd()
 
         glDisable(GL_BLEND)
         glEnable(GL_LIGHTING)
@@ -1170,6 +1227,11 @@ class OpticsSimulator:
     def _set_light_spacing_mm(self, value: float):
         """光源の間隔を設定（mm単位、スライダー用コールバック）"""
         self.light_spacing_mm = round(value, 1)
+        self.update_simulation()
+
+    def _set_water_ripple(self, value: float):
+        """水面ゆらぎ強度を設定（スライダー用コールバック）"""
+        self.engine.water_ripple_strength = round(value, 2)
         self.update_simulation()
 
     def _rebuild_balls(self):
@@ -2168,6 +2230,10 @@ class OpticsSimulator:
 
         while self.running:
             self.handle_events()
+
+            # 水面ゆらぎのアニメーション更新
+            if self.engine.water_ripple_strength > 0:
+                self.engine.water_ripple_time += 0.05
 
             # 描画
             if self.view_mode_3d:
