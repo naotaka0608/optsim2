@@ -2514,6 +2514,11 @@ class OpticsSimulator:
             intensity = np.mean(line_data, axis=1) # (Width,)
             axis_len = self.width
             
+            # サイドバー領域を除外（輝度を0にする）
+            # サイドバー幅はui_panel_width
+            sidebar_end = self.ui_panel_width
+            intensity[:sidebar_end] = 0
+            
         # 背景色を除去
         # スキャンライン上の最頻出色を背景色とみなす（動的判定）
         if len(line_data) > 0:
@@ -2528,6 +2533,33 @@ class OpticsSimulator:
             diff = np.abs(line_data.astype(np.int16) - bg_color)
             is_bg = np.all(diff < 20, axis=1)
             intensity[is_bg] = 0
+            
+            # 水面色を除去（シアン〜青系: 彩度が高い青）
+            # グレー系の球は除外しない
+            r = line_data[:, 0].astype(np.int16)
+            g = line_data[:, 1].astype(np.int16)
+            b = line_data[:, 2].astype(np.int16)
+            
+            # 彩度チェック: RGBの最大と最小の差が小さい場合はグレー系
+            max_rgb = np.maximum(np.maximum(r, g), b)
+            min_rgb = np.minimum(np.minimum(r, g), b)
+            saturation = max_rgb - min_rgb  # 大きいほど彩度が高い
+            
+            # 水面判定: 青/緑が強く、彩度が高い（グレーではない）
+            # 水面色: 青成分が高く、赤が低め（シアン〜青）、かつ彩度がある
+            is_water = (b > 150) & (g > 100) & (r < g) & (saturation > 50)
+            intensity[is_water] = 0
+            
+            # XYZ軸線を除去（彩度の高い赤/緑/青）
+            # 軸は純粋な赤、緑、青で描画されている
+            # X軸: 赤系 (赤が優勢、緑青が低い)
+            # Y軸: 緑系 (緑が優勢、赤青が低い)
+            # Z軸: 青系 (青が優勢、赤緑が低い)
+            is_axis_x = (r > 120) & (r > g + 50) & (r > b + 50) & (saturation > 60)
+            is_axis_y = (g > 120) & (g > r + 50) & (g > b + 50) & (saturation > 60)
+            is_axis_z = (b > 150) & (b > r + 50) & (b > g + 50) & (saturation > 60)
+            is_axis = is_axis_x | is_axis_y | is_axis_z
+            intensity[is_axis] = 0
             
         # グラフ描画用Surface
         graph_height = 200 # 高さを増やす
@@ -2553,9 +2585,10 @@ class OpticsSimulator:
             label_rect = label.get_rect(midright=(plot_x_start - 10, py))
             s.blit(label, label_rect)
             
-        # X軸 (ピクセル位置)
+        # X軸 (ピクセル位置 - 実際の画面座標を表示)
         x_steps = 10
         for i in range(x_steps + 1):
+            # 実際のピクセル座標を表示
             val = int((i / x_steps) * axis_len)
             px = plot_x_start + (i / x_steps) * graph_width
             # グリッド線
@@ -2572,8 +2605,8 @@ class OpticsSimulator:
         
         points = []
         for i in range(len(intensity)):
-            # x座標: グラフ幅に合わせてスケーリング
-            px = plot_x_start + (i / axis_len) * graph_width
+            # x座標: スクリーンのX座標と一致させる（球の位置と波形のピークが揃うように）
+            px = i  # 直接スクリーンX座標を使用
             # y座標: 輝度に合わせて高さ計算（輝度が高いほど上）
             py = plot_y_end - (intensity[i] / 255.0) * plot_h
             points.append((px, py))
