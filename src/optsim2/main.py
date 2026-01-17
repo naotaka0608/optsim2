@@ -272,6 +272,9 @@ class OpticsSimulator:
         self.view_mode_3d = False  # False=2Dモード, True=3Dモード
         self.view_mode_raytracing = False  # レイトレーシング風3D描画モード（未使用）
         self.view_mode_natural_3d = False  # 自然光3Dモード（キー4）
+        self.heatmap_mode = False  # ヒートマップ表示モード（キーH）
+        self.heatmap_cache = {}  # ヒートマップのキャッシュ
+        self.heatmap_max_intensity = 1  # ヒートマップの最大強度
         self.raytracing_image = None  # レイトレーシング結果のサーフェス
         self.camera_rotation = [20.0, 45.0]  # [pitch, yaw] in degrees
         self.camera_distance = 800.0
@@ -359,6 +362,137 @@ class OpticsSimulator:
 
         glPopMatrix()
 
+    def draw_sphere_heatmap_3d(self, ball_idx, ball_world_pos, radius, view_x, view_y, view_z):
+        """3D球体をヒートマップで描画（キャッシュされたヒット情報を使用）"""
+        glPushMatrix()
+        glTranslatef(view_x, view_y, view_z)
+        glDisable(GL_LIGHTING)
+
+        # キャッシュからヒットマップを取得
+        heatmap = self.heatmap_cache.get(ball_idx, {})
+        max_intensity = self.heatmap_max_intensity
+
+        # 球を描画（セグメント数を減らして軽量化）
+        slices = 16
+        stacks = 12
+
+        for i in range(stacks):
+            lat0 = math.pi * (-0.5 + float(i) / stacks)
+            lat1 = math.pi * (-0.5 + float(i + 1) / stacks)
+            z0 = math.sin(lat0)
+            z1 = math.sin(lat1)
+            r0 = math.cos(lat0)
+            r1 = math.cos(lat1)
+
+            glBegin(GL_QUAD_STRIP)
+            for j in range(slices + 1):
+                lng = 2 * math.pi * float(j) / slices
+                x_n = math.cos(lng)
+                y_n = math.sin(lng)
+
+                for z_val, r_val, stack_idx in [(z0, r0, i), (z1, r1, i + 1)]:
+                    nx = x_n * r_val
+                    ny = y_n * r_val
+                    nz = z_val
+
+                    # キャッシュからこのセグメントの強度を取得
+                    seg_key = (stack_idx, j % slices)
+                    intensity = heatmap.get(seg_key, 0)
+                    color = self.get_heatmap_color(intensity, max_intensity)
+
+                    glColor3f(*color)
+                    glVertex3f(nx * radius, ny * radius, nz * radius)
+
+            glEnd()
+
+        glEnable(GL_LIGHTING)
+        glPopMatrix()
+
+    def calculate_heatmap_cache(self):
+        """全球のヒートマップ情報を事前計算してキャッシュ"""
+        self.heatmap_cache = {}
+        self.heatmap_max_intensity = 1
+
+        slices = 16
+        stacks = 12
+
+        all_intensities = []
+
+        for ball_idx, ball in enumerate(self.engine.balls):
+            ball_cx, ball_cy, ball_cz = ball['position']
+            ball_r = ball['radius']
+            ball_heatmap = {}
+
+            for i in range(stacks + 1):
+                # 描画時と同じ計算方法を使用
+                lat = math.pi * (-0.5 + float(i) / stacks)
+                lat_sin = math.sin(lat)  # Z方向（OpenGLでのローカルZ）
+                lat_cos = math.cos(lat)  # X-Y平面での半径
+
+                for j in range(slices):
+                    lng = 2 * math.pi * float(j) / slices
+                    lng_cos = math.cos(lng)
+                    lng_sin = math.sin(lng)
+
+                    # OpenGLローカル座標系での法線（描画時と同じ）
+                    # nx = lng_cos * lat_cos
+                    # ny = lng_sin * lat_cos
+                    # nz = lat_sin
+                    nx = lng_cos * lat_cos
+                    ny = lng_sin * lat_cos
+                    nz = lat_sin
+
+                    # 球の表面のワールド座標（2D座標系）
+                    # 注意：2D座標系ではY軸が下向き、OpenGLではY軸が上向き
+                    # OpenGLの(nx, ny, nz)を2Dワールド座標に変換
+                    # OpenGL Y軸上向き → 2D Y軸下向き（反転）
+                    world_x = ball_cx + nx * ball_r
+                    world_y = ball_cy - ny * ball_r  # Y軸反転
+                    world_z = ball_cz + nz * ball_r
+
+                    # この点に当たる光線をカウント
+                    hit_count = 0
+                    tolerance = ball_r * 0.4
+
+                    for ray in self.engine.rays:
+                        if len(ray.path) < 2:
+                            continue
+
+                        for k in range(len(ray.path) - 1):
+                            p1 = ray.path[k]
+                            p2 = ray.path[k + 1]
+                            p1x, p1y = float(p1[0]), float(p1[1])
+                            p2x, p2y = float(p2[0]), float(p2[1])
+                            p1z = float(p1[2]) if len(p1) > 2 else 0.0
+                            p2z = float(p2[2]) if len(p2) > 2 else 0.0
+
+                            dx = p2x - p1x
+                            dy = p2y - p1y
+                            dz = p2z - p1z
+                            line_len_sq = dx * dx + dy * dy + dz * dz
+                            if line_len_sq < 0.001:
+                                continue
+
+                            t = max(0, min(1, ((world_x - p1x) * dx + (world_y - p1y) * dy + (world_z - p1z) * dz) / line_len_sq))
+                            closest_x = p1x + t * dx
+                            closest_y = p1y + t * dy
+                            closest_z = p1z + t * dz
+                            dist = math.sqrt((world_x - closest_x) ** 2 + (world_y - closest_y) ** 2 + (world_z - closest_z) ** 2)
+
+                            if dist <= tolerance:
+                                hit_count += 1
+                                break
+
+                    ball_heatmap[(i, j)] = hit_count
+                    if hit_count > 0:
+                        all_intensities.append(hit_count)
+
+            self.heatmap_cache[ball_idx] = ball_heatmap
+
+        # 最大強度を設定
+        if all_intensities:
+            self.heatmap_max_intensity = max(1, max(all_intensities))
+
     def draw_line_3d(self, p1, p2, color, width=2.0):
         """3D線分を描画"""
         glDisable(GL_LIGHTING)
@@ -412,14 +546,17 @@ class OpticsSimulator:
         self.setup_3d_perspective()
 
         # 球を描画（3D座標を使用）- 不透明なものを先に描画
-        for ball in self.engine.balls:
+        for ball_idx, ball in enumerate(self.engine.balls):
             x_3d, y_3d, z_3d = ball['position']
             # ビュー座標系に変換
             x_3d_view = x_3d - self.view_width / 2
             y_3d_view = -(y_3d - self.view_height / 2)
 
-            # 球の色（水中なので少し青みがかった色）
-            self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.7, 0.8, 0.9))
+            # ヒートマップモード時は表面の各点で色を変える
+            if self.heatmap_mode:
+                self.draw_sphere_heatmap_3d(ball_idx, ball['position'], ball['radius'], x_3d_view, y_3d_view, z_3d)
+            else:
+                self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.7, 0.8, 0.9))
 
         # 光源を描画（複数光源を中央配置）
         light_x_2d, light_y_2d = self.light_position
@@ -581,8 +718,16 @@ class OpticsSimulator:
         # 最初の光源位置をOpenGLライトとして設定
         glLightfv(GL_LIGHT0, GL_POSITION, [light_x_3d, light_y_3d, 0, 1.0])
 
+        # ヒートマップモード時は各球の強度を計算
+        ball_intensities = {}
+        max_intensity = 1
+        if self.heatmap_mode:
+            ball_intensities = self.calculate_ball_hit_intensity()
+            if ball_intensities:
+                max_intensity = max(ball_intensities.values()) if max(ball_intensities.values()) > 0 else 1
+
         # 球を描画（3D座標を使用）- 不透明なものを先に描画
-        for ball in self.engine.balls:
+        for ball_idx, ball in enumerate(self.engine.balls):
             x_3d, y_3d, z_3d = ball['position']
             # ビュー座標系に変換
             x_3d_view = x_3d - self.view_width / 2
@@ -656,8 +801,11 @@ class OpticsSimulator:
                 # 環境光のみ
                 glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.1, 0.1, 0.1, 1])
 
-            # 球の色（自然な色合い）
-            self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.85, 0.75, 0.7))
+            # ヒートマップモード時は表面の各点で色を変える、通常時は自然な色合い
+            if self.heatmap_mode:
+                self.draw_sphere_heatmap_3d(ball_idx, ball['position'], ball['radius'], x_3d_view, y_3d_view, z_3d)
+            else:
+                self.draw_sphere_3d(x_3d_view, y_3d_view, z_3d, ball['radius'], (0.85, 0.75, 0.7))
 
         # 座標軸を描画（デバッグ用）
         axis_length = 100
@@ -1020,6 +1168,78 @@ class OpticsSimulator:
 
         return (r, g, b)
 
+    def calculate_ball_hit_intensity(self):
+        """各球に当たった光線の数を計算してヒートマップ用の強度を返す"""
+        ball_intensities = {}
+
+        if not self.engine.balls:
+            return ball_intensities
+
+        for ball_idx, ball in enumerate(self.engine.balls):
+            ball_cx, ball_cy, ball_cz = ball['position']
+            ball_r = ball['radius']
+            hit_count = 0
+
+            for ray in self.engine.rays:
+                if len(ray.path) < 2:
+                    continue
+
+                # 光線の経路をチェック（3D空間での判定）
+                for i in range(len(ray.path) - 1):
+                    p1 = ray.path[i]
+                    p2 = ray.path[i + 1]
+                    p1x, p1y = float(p1[0]), float(p1[1])
+                    p2x, p2y = float(p2[0]), float(p2[1])
+                    p1z = float(p1[2]) if len(p1) > 2 else 0.0
+                    p2z = float(p2[2]) if len(p2) > 2 else 0.0
+
+                    # 3D距離を計算
+                    dx = p2x - p1x
+                    dy = p2y - p1y
+                    dz = p2z - p1z
+                    line_len_sq = dx * dx + dy * dy + dz * dz
+                    if line_len_sq < 0.001:
+                        continue
+
+                    # 球の中心から線分への最短距離を計算（3D）
+                    t = max(0, min(1, ((ball_cx - p1x) * dx + (ball_cy - p1y) * dy + (ball_cz - p1z) * dz) / line_len_sq))
+                    closest_x = p1x + t * dx
+                    closest_y = p1y + t * dy
+                    closest_z = p1z + t * dz
+                    dist = math.sqrt((ball_cx - closest_x) ** 2 + (ball_cy - closest_y) ** 2 + (ball_cz - closest_z) ** 2)
+                    if dist <= ball_r:
+                        hit_count += 1
+                        break
+
+            ball_intensities[ball_idx] = hit_count
+
+        return ball_intensities
+
+    def get_heatmap_color(self, intensity: float, max_intensity: float) -> Tuple[float, float, float]:
+        """強度からヒートマップ色を計算（青→シアン→緑→黄→赤）OpenGL用に0-1の範囲で返す"""
+        if max_intensity == 0 or intensity == 0:
+            return (0.0, 0.0, 1.0)  # 青（光が当たっていない）
+
+        # 正規化 (0.0 ~ 1.0)
+        normalized = min(1.0, intensity / max_intensity)
+
+        if normalized < 0.25:
+            # 青 → シアン
+            ratio = normalized / 0.25
+            return (0.0, ratio, 1.0)
+        elif normalized < 0.5:
+            # シアン → 緑
+            ratio = (normalized - 0.25) / 0.25
+            return (0.0, 1.0, 1.0 - ratio)
+        elif normalized < 0.75:
+            # 緑 → 黄
+            ratio = (normalized - 0.5) / 0.25
+            return (ratio, 1.0, 0.0)
+        else:
+            # 黄 → 赤
+            ratio = (normalized - 0.75) / 0.25
+            return (1.0, 1.0 - ratio, 0.0)
+
     def draw_grid(self, surface: pygame.Surface, offset_x: int, offset_y: int):
         """グリッドを描画"""
         grid_spacing = 50
@@ -1348,6 +1568,7 @@ class OpticsSimulator:
             "Q/E: 広がり",
             "↑↓: 水面",
             "2/3キー: 2D/3D切替",
+            "H: ヒートマップ(3D)",
             "R: リセット",
         ]
 
@@ -1450,6 +1671,11 @@ class OpticsSimulator:
                         # OpenGL有効のウィンドウに切り替え
                         pygame.display.set_mode((self.width, self.height), DOUBLEBUF | OPENGL)
                         self.init_opengl_natural()
+
+                elif event.key == pygame.K_h:
+                    # ヒートマップモードの切り替え（3Dモード時のみ有効）
+                    if self.view_mode_3d or self.view_mode_natural_3d:
+                        self.heatmap_mode = not self.heatmap_mode
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左クリック
@@ -1689,6 +1915,9 @@ class OpticsSimulator:
 
         # 球の光強度を計算
         self.calculate_ball_intensity()
+
+        # ヒートマップキャッシュを更新
+        self.calculate_heatmap_cache()
 
     def run(self):
         """メインループ"""
