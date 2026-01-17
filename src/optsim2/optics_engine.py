@@ -50,6 +50,10 @@ class OpticsEngine:
         self.water_refractive_index = self.N_WATER  # 水の屈折率（変更可能）
         self.rays = []
         self.balls = []
+        # 水面ゆらぎ設定
+        self.water_ripple_strength = 0.0  # ゆらぎの強度（0.0 = なし、1.0 = 強い）
+        self.water_ripple_frequency = 0.05  # ゆらぎの周波数
+        self.water_ripple_time = 0.0  # アニメーション用の時間
 
     def add_ball(self, position: Tuple[float, float, float], radius: float):
         """球を追加
@@ -66,6 +70,44 @@ class OpticsEngine:
     def set_water_level(self, level: float):
         """水面の位置を設定"""
         self.water_level = level
+
+    def get_water_normal_with_ripple(self, x: float, z: float) -> np.ndarray:
+        """
+        ゆらぎを考慮した水面の法線ベクトルを取得
+
+        Args:
+            x: 水面上のX座標
+            z: 水面上のZ座標
+
+        Returns:
+            法線ベクトル（正規化済み）
+        """
+        if self.water_ripple_strength <= 0.0:
+            return np.array([0, -1, 0], dtype=float)
+
+        # サイン波によるゆらぎ（複数の波を重ね合わせ）
+        freq = self.water_ripple_frequency
+        t = self.water_ripple_time
+
+        # X方向のゆらぎ
+        ripple_x = (math.sin(x * freq + t) +
+                    0.5 * math.sin(x * freq * 2.3 + t * 1.7) +
+                    0.3 * math.sin(z * freq * 0.7 + t * 0.8))
+
+        # Z方向のゆらぎ
+        ripple_z = (math.sin(z * freq + t * 1.2) +
+                    0.5 * math.sin(z * freq * 1.8 + t * 0.9) +
+                    0.3 * math.sin(x * freq * 0.5 + t * 1.1))
+
+        # 強度を適用
+        strength = self.water_ripple_strength * 0.3  # 最大30度程度の傾き
+        nx = ripple_x * strength
+        nz = ripple_z * strength
+        ny = -1.0
+
+        # 正規化
+        normal = np.array([nx, ny, nz], dtype=float)
+        return normal / np.linalg.norm(normal)
 
     def refract(self, incident: np.ndarray, normal: np.ndarray, n1: float, n2: float) -> Optional[np.ndarray]:
         """
@@ -215,7 +257,10 @@ class OpticsEngine:
 
             # 水面での屈折
             if hit_type == 'water':
-                normal = np.array([0, -1, 0], dtype=float)  # 水面の法線（上向き、3D）
+                # ゆらぎを考慮した法線を取得
+                hit_x = ray.origin[0]
+                hit_z = ray.origin[2] if len(ray.origin) > 2 else 0.0
+                normal = self.get_water_normal_with_ripple(hit_x, hit_z)
 
                 # 現在の媒質を判定
                 if ray.origin[1] < self.water_level:
